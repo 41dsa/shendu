@@ -1,0 +1,313 @@
+import json
+from datetime import UTC, datetime
+from typing import Any
+
+from sqlalchemy.orm import Session
+
+from app.models.entities import (
+    CredentialRole,
+    GradingAnswerCache,
+    GradingJob,
+    GradingJobStatus,
+    Question,
+    Report,
+    Submission,
+    UserAiUsage,
+    UserProviderCredential,
+)
+from app.services.ai_client import AiCallError, chat_completion_json, get_credential
+from app.domain.essay import essay_length_ratio, essay_word_bounds
+from app.services.grading_helpers import (
+    answer_hash,
+    build_scoring_basis,
+    compute_confidence,
+    compute_consensus_rate,
+)
+
+GRADING_STEPS = [
+    "parse_prompt",
+    "check_requirements",
+    "analyze_structure",
+    "analyze_thesis",
+    "analyze_argumentation",
+    "rule_score",
+    "llm_score",
+    "review",
+    "generate_report",
+]
+
+SYSTEM_PROMPT = """你是申论大作文阅卷专家（不是小题概括/分析/对策题阅卷）。
+评价对象是一篇完整议论文：自拟或给定主题的立意、结构、论证、语言与字数规范。
+仅输出 JSON：
+{
+  "total_score": number,
+  "score_range": [min, max],
+  "scoring_points": [
+    {"id": string, "label": string, "earned": number, "max": number,
+     "hit": "full"|"partial"|"miss", "reason": string, "evidence_ref": string}
+  ],
+  "issues": [
+    {"tag": string, "severity": "severe"|"moderate"|"minor",
+     "explanation": string, "user_quote": string, "evidence_ref": string}
+  ],
+  "suggestions": [string],
+  "review_notes": string
+}
+scoring_points 对应题目给出的维度（如立意、结构、论证、语言）。勿按「从材料摘抄要点」方式评分。
+issues 最多 3 条；suggestions 3～5 条。tag 示例：W01 立意偏差、W02 结构不完整、W03 论证空洞、W04 语言不规范、W05 字数不合规。"""
+
+CONSENSUS_PROMPT = """你是申论大作文严格阅卷人。根据题干与用户作文，仅输出 JSON：{"score": number}。"""
+
+
+def append_step(job: GradingJob, step: str, detail: str = "done") -> None:
+    steps = list(job.steps or [])
+    steps.append({"step": step, "detail": detail, "at": datetime.now(UTC).isoformat()})
+    job.steps = steps
+    job.current_step = step
+
+
+def rule_score_fallback(question: Question, answer: str) -> float:
+    points = question.scoring_points or []
+    max_score = float(question.score)
+    if not points:
+        return 0.0
+    word_min, word_max = essay_word_bounds(question.material_structured, question.word_limit)
+    n = len(answer.strip())
+    per = max_score / len(points)
+    paragraphs = [p for p in answer.replace("\r", "").split("\n") if p.strip()]
+    structure_ok = len(paragraphs) >= 4
+    length_ok = word_min <= n <= word_max
+    earned = 0.0
+    for p in points:
+        label = p.get("label", "")
+        if "结构" in label:
+            earned += per * (0.85 if structure_ok else 0.35)
+        elif "立意" in label or "观点" in label:
+            earned += per * (0.5 if n >= word_min * 0.5 else 0.2)
+        elif "论证" in label:
+            earned += per * (0.7 if structure_ok and n >= word_min * 0.6 else 0.25)
+        elif "语言" in label:
+            earned += per * (0.65 if length_ok else 0.4)
+        else:
+            earned += per * (0.75 if length_ok else 0.3)
+    return min(max_score, round(earned, 1))
+
+
+def log_usage(
+    db: Session,
+    user_id: str,
+    job_id: str,
+    cred: UserProviderCredential,
+    usage: dict[str, Any] | None,
+    call_type: str,
+) -> None:
+    tokens_in = usage.get("prompt_tokens") if usage else None
+    tokens_out = usage.get("completion_tokens") if usage else None
+    db.add(
+        UserAiUsage(
+            user_id=user_id,
+            grading_job_id=job_id,
+            model=cred.model,
+            provider_base_url=cred.base_url,
+            tokens_in=tokens_in,
+            tokens_out=tokens_out,
+            call_type=call_type,
+        )
+    )
+
+
+def short_circuit_payload(question: Question, reason: str, word_ratio: float) -> dict[str, Any]:
+    return {
+        "total_score": 0,
+        "score_range": [0, 0],
+        "confidence": "low",
+        "consensus_rate": 0,
+        "display_mode": "reference_only",
+        "short_circuit_reason": reason,
+        "word_ratio": word_ratio,
+        "scoring_points": [],
+        "issues": [],
+        "suggestions": ["请按大作文字数与结构要求重写后再提交批改。"],
+        "rule_score": 0,
+        "llm_score": 0,
+    }
+
+
+async def run_grading_job(db: Session, job_id: str) -> None:
+    job = db.get(GradingJob, job_id)
+    if not job:
+        return
+    submission = db.get(Submission, job.submission_id)
+    if not submission:
+        job.status = GradingJobStatus.failed
+        job.error_message = "提交不存在"
+        db.commit()
+        return
+    question = db.get(Question, submission.question_id)
+    if not question:
+        job.status = GradingJobStatus.failed
+        job.error_message = "题目不存在"
+        db.commit()
+        return
+
+    job.status = GradingJobStatus.running
+    db.commit()
+
+    try:
+        content = submission.content.strip()
+        word_min, word_max = essay_word_bounds(question.material_structured, question.word_limit)
+        word_ratio = essay_length_ratio(len(content), word_min)
+
+        for step in GRADING_STEPS[:5]:
+            append_step(job, step)
+            db.commit()
+
+        if len(content) < 10 or word_ratio < 0.3:
+            reason = "作文过短" if len(content) < 10 else f"字数不足（低于建议字数 {word_min} 字的约 30%）"
+            payload = short_circuit_payload(question, reason, word_ratio)
+            append_step(job, "generate_report", "short_circuit")
+            report = Report(grading_job_id=job.id, user_id=job.user_id, payload=payload)
+            db.add(report)
+            job.status = GradingJobStatus.succeeded
+            job.finished_at = datetime.now(UTC)
+            job.current_step = "done"
+            db.commit()
+            return
+
+        h = answer_hash(question.id, content)
+        cached = (
+            db.query(GradingAnswerCache)
+            .filter(GradingAnswerCache.question_id == question.id, GradingAnswerCache.answer_hash == h)
+            .first()
+        )
+        if cached:
+            payload = dict(cached.report_payload)
+            payload["from_cache"] = True
+            append_step(job, "llm_score", "cache_hit")
+            append_step(job, "review")
+            append_step(job, "generate_report")
+            report = Report(grading_job_id=job.id, user_id=job.user_id, payload=payload)
+            db.add(report)
+            job.status = GradingJobStatus.succeeded
+            job.finished_at = datetime.now(UTC)
+            job.current_step = "done"
+            db.commit()
+            return
+
+        cred = get_credential(db, job.user_id, CredentialRole.primary)
+        if not cred:
+            raise AiCallError("NO_KEY", "未配置主模型 API Key")
+
+        essay_prompt = (question.prompt or "").strip() or (question.material or "")
+        user_prompt = json.dumps(
+            {
+                "task": "essay",
+                "question_type": question.question_type.value,
+                "title": question.title,
+                "prompt": essay_prompt,
+                "reference_material": question.material,
+                "rubric_dimensions": question.scoring_points,
+                "max_score": question.score,
+                "word_min": word_min,
+                "word_max": word_max,
+                "user_essay": content,
+            },
+            ensure_ascii=False,
+        )
+
+        append_step(job, "rule_score")
+        rule = rule_score_fallback(question, content)
+        db.commit()
+
+        append_step(job, "llm_score", "calling")
+        db.commit()
+
+        raw, usage = await chat_completion_json(cred, SYSTEM_PROMPT, user_prompt)
+        log_usage(db, job.user_id, job.id, cred, usage, "primary")
+        payload = json.loads(raw)
+
+        llm_score = float(payload.get("total_score", rule))
+        payload["llm_score"] = llm_score
+        payload["rule_score"] = rule
+
+        consensus_scores = [llm_score]
+        consensus_delta: float | None = None
+
+        use_consensus = not cred.save_tokens_mode and word_ratio >= 0.3
+        if use_consensus and abs(llm_score - rule) <= 1.0:
+            use_consensus = False
+        if use_consensus:
+            append_step(job, "review", "consensus")
+            db.commit()
+            cred2 = get_credential(db, job.user_id, CredentialRole.consensus) or cred
+            try:
+                raw2, usage2 = await chat_completion_json(cred2, CONSENSUS_PROMPT, user_prompt)
+                log_usage(db, job.user_id, job.id, cred2, usage2, "consensus")
+                score2 = float(json.loads(raw2).get("score", llm_score))
+                consensus_scores.append(score2)
+                consensus_delta = abs(llm_score - score2)
+                if consensus_delta > 1.0:
+                    llm_score = round((llm_score + score2) / 2, 1)
+            except AiCallError:
+                consensus_scores.append(llm_score)
+
+        payload["max_score"] = float(question.score)
+        payload["consensus_scores"] = consensus_scores
+        payload["consensus_rate"] = compute_consensus_rate(consensus_scores, float(question.score))
+        payload["total_score"] = llm_score
+
+        if not payload.get("score_range"):
+            payload["score_range"] = [
+                max(0, round(llm_score - 1, 1)),
+                min(float(question.score), round(llm_score + 1, 1)),
+            ]
+
+        conf = compute_confidence(llm_score, rule, float(question.score), consensus_delta, word_ratio)
+        payload["confidence"] = conf
+        if conf == "low":
+            payload["display_mode"] = "reference_only"
+        else:
+            payload["display_mode"] = "normal"
+
+        payload["essay_meta"] = {"word_min": word_min, "word_max": word_max}
+        payload["scoring_basis"] = build_scoring_basis(
+            payload,
+            {
+                "scoring_points": question.scoring_points,
+                "max_score": question.score,
+                "prompt_excerpt": essay_prompt[:200],
+            },
+        )
+
+        append_step(job, "generate_report")
+        report = Report(grading_job_id=job.id, user_id=job.user_id, payload=payload)
+        db.add(report)
+
+        db.add(
+            GradingAnswerCache(
+                question_id=question.id,
+                answer_hash=h,
+                report_payload=payload,
+            )
+        )
+
+        job.status = GradingJobStatus.succeeded
+        job.finished_at = datetime.now(UTC)
+        job.current_step = "done"
+        db.commit()
+    except AiCallError as exc:
+        job.status = GradingJobStatus.failed
+        job.error_message = exc.code + ": " + str(exc)
+        job.finished_at = datetime.now(UTC)
+        db.commit()
+    except json.JSONDecodeError:
+        job.status = GradingJobStatus.failed
+        job.error_message = "UPSTREAM: 模型返回非 JSON"
+        job.finished_at = datetime.now(UTC)
+        db.commit()
+    except Exception as exc:  # noqa: BLE001
+        job.status = GradingJobStatus.failed
+        job.error_message = "INTERNAL"
+        job.finished_at = datetime.now(UTC)
+        db.commit()
+        raise exc

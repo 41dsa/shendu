@@ -1,0 +1,82 @@
+import { Button, Layout, Menu, Space, Typography } from "antd";
+import {
+  EditOutlined,
+  FileTextOutlined,
+  HomeOutlined,
+  LogoutOutlined,
+  SettingOutlined,
+  ThunderboltOutlined,
+  UserOutlined,
+} from "@ant-design/icons";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Outlet, useLocation, useNavigate } from "react-router-dom";
+import { api, logout } from "../api/client";
+
+const { Sider, Content, Header } = Layout;
+
+const items = [
+  { key: "/", icon: <HomeOutlined />, label: "首页" },
+  { key: "/grading", icon: <EditOutlined />, label: "批改" },
+  { key: "/reports", icon: <FileTextOutlined />, label: "批改报告" },
+  { key: "/purchase", icon: <ThunderboltOutlined />, label: "购买/激活" },
+  { key: "/settings/ai", icon: <SettingOutlined />, label: "AI 设置" },
+  { key: "/settings/exam", icon: <UserOutlined />, label: "考试目标" },
+];
+
+export default function AppLayout() {
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const location = useLocation();
+  const { data: me } = useQuery({
+    queryKey: ["me"],
+    queryFn: () => api<{ email: string }>("/auth/me"),
+  });
+
+  const selected = (() => {
+    if (location.pathname.startsWith("/grading/jobs")) return "/grading";
+    if (location.pathname.startsWith("/reports/")) return "/reports";
+    const hit = items.find((i) => location.pathname === i.key || location.pathname.startsWith(i.key + "/"));
+    return hit?.key ?? "/";
+  })();
+
+  const handleLogout = () => {
+    logout();
+    queryClient.clear();
+    navigate("/login", { replace: true });
+  };
+
+  return (
+    <Layout style={{ minHeight: "100vh" }}>
+      <Sider width={200} theme="light" style={{ borderRight: "1px solid #f0f0f0" }}>
+        <div style={{ padding: 16, fontWeight: 700, color: "#1677ff" }}>智观申论</div>
+        <Menu mode="inline" selectedKeys={[selected]} items={items} onClick={(e) => navigate(e.key)} />
+      </Sider>
+      <Layout>
+        <Header
+          style={{
+            background: "#fff",
+            padding: "0 24px",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+          }}
+        >
+          <span style={{ fontSize: 16 }}>AI申论教练</span>
+          <Space>
+            {me?.email && (
+              <Typography.Text type="secondary" style={{ fontSize: 14 }}>
+                {me.email}
+              </Typography.Text>
+            )}
+            <Button type="text" icon={<LogoutOutlined />} onClick={handleLogout}>
+              退出登录
+            </Button>
+          </Space>
+        </Header>
+        <Content style={{ margin: 24 }}>
+          <Outlet />
+        </Content>
+      </Layout>
+    </Layout>
+  );
+}

@@ -16,7 +16,7 @@ from app.models.entities import (
     UserProviderCredential,
 )
 from app.services.ai_client import AiCallError, chat_completion_json, get_credential
-from app.domain.essay import essay_length_ratio, essay_word_bounds
+from app.domain.essay import essay_length_ratio, essay_word_bounds, issue_tag_prompt_hint
 from app.services.grading_helpers import (
     answer_hash,
     build_scoring_basis,
@@ -36,7 +36,7 @@ GRADING_STEPS = [
     "generate_report",
 ]
 
-SYSTEM_PROMPT = """你是申论大作文阅卷专家（不是小题概括/分析/对策题阅卷）。
+_SYSTEM_PROMPT_TEMPLATE = """你是申论大作文阅卷专家（不是小题概括/分析/对策题阅卷）。
 评价对象是一篇完整议论文：自拟或给定主题的立意、结构、论证、语言与字数规范。
 仅输出 JSON：
 {
@@ -54,7 +54,9 @@ SYSTEM_PROMPT = """你是申论大作文阅卷专家（不是小题概括/分析
   "review_notes": string
 }
 scoring_points 对应题目给出的维度（如立意、结构、论证、语言）。勿按「从材料摘抄要点」方式评分。
-issues 最多 3 条；suggestions 3～5 条。tag 示例：W01 立意偏差、W02 结构不完整、W03 论证空洞、W04 语言不规范、W05 字数不合规。"""
+issues 最多 3 条；suggestions 3～5 条。tag 必须使用 PRD 编号+名称，例如："""
+
+SYSTEM_PROMPT = _SYSTEM_PROMPT_TEMPLATE + issue_tag_prompt_hint() + "。"
 
 CONSENSUS_PROMPT = """你是申论大作文严格阅卷人。根据题干与用户作文，仅输出 JSON：{"score": number}。"""
 

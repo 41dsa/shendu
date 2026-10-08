@@ -49,15 +49,22 @@ def upsert_credential(
         role_enum = CredentialRole(role)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="无效 role") from exc
-    nonce, ct = encrypt_secret(body.api_key)
     row = get_credential(db, user.id, role_enum)
+    key_plain = (body.api_key or "").strip()
     if row:
         row.base_url = body.base_url.rstrip("/")
         row.model = body.model
-        row.api_key_nonce = nonce
-        row.api_key_ciphertext = ct
         row.save_tokens_mode = body.save_tokens_mode
+        if key_plain:
+            if len(key_plain) < 8:
+                raise HTTPException(status_code=422, detail="API Key 至少 8 位")
+            nonce, ct = encrypt_secret(key_plain)
+            row.api_key_nonce = nonce
+            row.api_key_ciphertext = ct
     else:
+        if len(key_plain) < 8:
+            raise HTTPException(status_code=422, detail="首次保存请填写 API Key（至少 8 位）")
+        nonce, ct = encrypt_secret(key_plain)
         row = UserProviderCredential(
             user_id=user.id,
             role=role_enum,
@@ -70,11 +77,14 @@ def upsert_credential(
         db.add(row)
     db.commit()
     db.refresh(row)
+    from app.services.ai_client import decrypt_api_key
+
+    masked = mask_api_key(decrypt_api_key(row))
     return AiCredentialView(
         role=role_enum.value,
         base_url=row.base_url,
         model=row.model,
-        api_key_masked=mask_api_key(body.api_key),
+        api_key_masked=masked,
         configured=True,
     )
 

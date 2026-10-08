@@ -47,7 +47,15 @@ export default function SettingsAiPage() {
           model: primary?.model || "deepseek-chat",
           save_tokens_mode: false,
         }}
-        onFinish={(v) => save.mutate(v)}
+        onFinish={(v) => {
+          const payload: Record<string, unknown> = {
+            base_url: v.base_url,
+            model: v.model,
+            save_tokens_mode: v.save_tokens_mode ?? false,
+          };
+          if (v.api_key?.trim()) payload.api_key = v.api_key.trim();
+          save.mutate(payload);
+        }}
       >
         <Form.Item name="base_url" label="API Base URL" rules={[{ required: true }]}>
           <Input />

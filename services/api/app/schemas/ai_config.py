@@ -3,8 +3,8 @@ from pydantic import BaseModel, Field
 
 class AiCredentialUpsert(BaseModel):
     base_url: str = Field(max_length=512)
-    api_key: str = Field(min_length=8, max_length=512)
     model: str = Field(max_length=128)
+    api_key: str | None = Field(default=None, max_length=512)
     save_tokens_mode: bool = False
 
 

@@ -7,3 +7,33 @@ body {
 #root {
   min-height: 100vh;
 }
+
+.app-header {
+  background: #fff;
+  padding: 0 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.app-content {
+  margin: 24px;
+}
+
+@media (max-width: 992px) {
+  .app-content {
+    margin: 12px;
+  }
+
+  .app-header {
+    padding: 0 12px;
+  }
+
+  .app-header-title {
+    font-size: 14px;
+  }
+
+  .app-header-email {
+    display: none;
+  }
+}

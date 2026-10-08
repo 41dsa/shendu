@@ -237,14 +237,18 @@ def build_home_summary(db: Session, user_id: str) -> dict[str, Any]:
         for r in recent
     ]
 
+    from app.services.training_service import count_today_completed, suggest_level
+
     return {
         "abilities": abilities,
         "focus_issue": focus,
         "today_training": {
             "title": training_title,
             "reason": training_reason,
-            "level": "L1",
-            "progress_done": min(len(recent), 1),
+            "level": (
+                suggest_level(weakest["score"] if weakest else None).value if weakest else "L1"
+            ),
+            "progress_done": count_today_completed(db, user_id),
             "progress_target": 3,
         },
         "recent_reports": recent_items,

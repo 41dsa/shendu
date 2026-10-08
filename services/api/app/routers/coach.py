@@ -15,13 +15,27 @@ from app.models.entities import (
     SubmissionStatus,
     User,
 )
-from app.schemas.coach import RetryContextResponse, RetrySubmitBody, RetrySubmitResponse
+from app.schemas.coach import (
+    RetryContextResponse,
+    RetrySubmitBody,
+    RetrySubmitResponse,
+    TrainingCompleteBody,
+    TrainingStartBody,
+)
 from app.services.ai_client import get_credential
 from app.services.coach_service import (
     aggregate_issue_book,
     build_home_summary,
     compute_abilities,
     get_retry_context,
+)
+from app.services.training_service import (
+    build_me_summary,
+    build_training_plan,
+    complete_training_record,
+    skip_training_record,
+    start_training_record,
+    _record_to_dict,
 )
 from app.worker.tasks import enqueue_grading_job
 
@@ -131,3 +145,75 @@ def submit_retry(
         submission_id=row.id,
         attempt=attempt,
     )
+
+
+@router.get("/training/plan")
+def training_plan(
+    user: User = Depends(get_current_user),
+    _lic: License = Depends(get_active_license),
+    db: Session = Depends(get_db),
+) -> dict:
+    """今日 / 专项推荐 + 最近训练记录（FE-505）。"""
+    return build_training_plan(db, user.id)
+
+
+@router.get("/training/records")
+def list_training_records(
+    user: User = Depends(get_current_user),
+    _lic: License = Depends(get_active_license),
+    db: Session = Depends(get_db),
+) -> list[dict]:
+    plan = build_training_plan(db, user.id)
+    return plan["records"]
+
+
+@router.post("/training/records")
+def create_training_record(
+    body: TrainingStartBody,
+    user: User = Depends(get_current_user),
+    _lic: License = Depends(get_active_license),
+    db: Session = Depends(get_db),
+) -> dict:
+    row = start_training_record(db, user.id, body.model_dump())
+    return _record_to_dict(row)
+
+
+@router.post("/training/records/{record_id}/complete")
+def finish_training_record(
+    record_id: str,
+    body: TrainingCompleteBody,
+    user: User = Depends(get_current_user),
+    _lic: License = Depends(get_active_license),
+    db: Session = Depends(get_db),
+) -> dict:
+    try:
+        row = complete_training_record(
+            db, user.id, record_id, body.result_note, body.linked_report_id
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="训练记录不存在") from exc
+    return _record_to_dict(row)
+
+
+@router.post("/training/records/{record_id}/skip")
+def skip_training(
+    record_id: str,
+    user: User = Depends(get_current_user),
+    _lic: License = Depends(get_active_license),
+    db: Session = Depends(get_db),
+) -> dict:
+    try:
+        row = skip_training_record(db, user.id, record_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="训练记录不存在") from exc
+    return _record_to_dict(row)
+
+
+@router.get("/me")
+def me_summary(
+    user: User = Depends(get_current_user),
+    _lic: License = Depends(get_active_license),
+    db: Session = Depends(get_db),
+) -> dict:
+    """学习记录、Token 用量、争议占位（FE-507）。"""
+    return build_me_summary(db, user.id, user.email)

@@ -21,3 +21,18 @@ class RetrySubmitResponse(BaseModel):
     grading_job_id: str
     submission_id: str
     attempt: int
+
+
+class TrainingStartBody(BaseModel):
+    kind: str
+    title: str
+    level: str = "L1"
+    ability_id: str | None = None
+    focus_tag: str | None = None
+    instructions: str | None = None
+    question_id: str | None = None
+
+
+class TrainingCompleteBody(BaseModel):
+    result_note: str | None = None
+    linked_report_id: str | None = None

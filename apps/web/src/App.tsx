@@ -14,6 +14,8 @@ import ReportPage from "./pages/ReportPage";
 import RetryAnswerPage from "./pages/RetryAnswerPage";
 import AbilitiesPage from "./pages/AbilitiesPage";
 import IssueBookPage from "./pages/IssueBookPage";
+import TrainingPage from "./pages/TrainingPage";
+import MePage from "./pages/MePage";
 import SettingsAiPage from "./pages/SettingsAiPage";
 import ExamProfilePage from "./pages/ExamProfilePage";
 
@@ -37,6 +39,8 @@ export default function App() {
             <Route path="/reports/:reportId/retry" element={<RetryAnswerPage />} />
             <Route path="/abilities" element={<AbilitiesPage />} />
             <Route path="/issues" element={<IssueBookPage />} />
+            <Route path="/training" element={<TrainingPage />} />
+            <Route path="/me" element={<MePage />} />
             <Route path="/admin/codes" element={<AdminCodesPage />} />
           </Route>
         </Route>

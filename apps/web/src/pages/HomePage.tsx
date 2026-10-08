@@ -161,9 +161,14 @@ export default function HomePage() {
         <Card title="今日训练（推荐）" extra={<Tag>{training.progress_done}/{training.progress_target}</Tag>}>
           <Typography.Text strong>{training.title}</Typography.Text>
           <Typography.Paragraph type="secondary">{training.reason}</Typography.Paragraph>
-          <Button>
-            <Link to="/grading">去练习</Link>
-          </Button>
+          <Space>
+            <Button type="primary">
+              <Link to="/training">去训练</Link>
+            </Button>
+            <Button>
+              <Link to="/grading">去批改</Link>
+            </Button>
+          </Space>
         </Card>
       )}
 

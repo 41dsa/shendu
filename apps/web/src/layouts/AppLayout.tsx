@@ -2,7 +2,9 @@ import { Button, Layout, Menu, Space, Typography } from "antd";
 import {
   EditOutlined,
   FileTextOutlined,
+  FundOutlined,
   HomeOutlined,
+  UnorderedListOutlined,
   LogoutOutlined,
   SettingOutlined,
   ThunderboltOutlined,
@@ -18,6 +20,8 @@ const items = [
   { key: "/", icon: <HomeOutlined />, label: "首页" },
   { key: "/grading", icon: <EditOutlined />, label: "批改" },
   { key: "/reports", icon: <FileTextOutlined />, label: "批改报告" },
+  { key: "/abilities", icon: <FundOutlined />, label: "能力画像" },
+  { key: "/issues", icon: <UnorderedListOutlined />, label: "问题本" },
   { key: "/purchase", icon: <ThunderboltOutlined />, label: "购买/激活" },
   { key: "/settings/ai", icon: <SettingOutlined />, label: "AI 设置" },
   { key: "/settings/exam", icon: <UserOutlined />, label: "考试目标" },

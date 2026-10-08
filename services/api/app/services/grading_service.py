@@ -17,6 +17,7 @@ from app.models.entities import (
 )
 from app.services.ai_client import AiCallError, chat_completion_json, get_credential
 from app.domain.essay import essay_length_ratio, essay_word_bounds, issue_tag_prompt_hint
+from app.services.coach_service import build_retry_comparison, find_report_for_submission
 from app.services.grading_helpers import (
     answer_hash,
     build_scoring_basis,
@@ -232,6 +233,19 @@ async def run_grading_job(db: Session, job_id: str) -> None:
         payload["llm_score"] = llm_score
         payload["rule_score"] = rule
 
+        # 为维度条目补上 ability 字段，供 coach 能力聚合（与题库 rubric 对齐）
+        rubric_by_id = {p.get("id"): p for p in (question.scoring_points or []) if p.get("id")}
+        for point in payload.get("scoring_points") or []:
+            if point.get("ability"):
+                continue
+            ref = rubric_by_id.get(point.get("id")) or {}
+            if ref.get("ability"):
+                point["ability"] = ref["ability"]
+            elif ref.get("label"):
+                from app.domain.essay import label_to_ability
+
+                point["ability"] = label_to_ability(str(ref.get("label")))
+
         consensus_scores = [llm_score]
         consensus_delta: float | None = None
 
@@ -280,6 +294,14 @@ async def run_grading_job(db: Session, job_id: str) -> None:
                 "prompt_excerpt": essay_prompt[:200],
             },
         )
+
+        # 二次作答：与首次报告对比（P5 / BE-502）
+        if submission.parent_submission_id:
+            payload["attempt"] = submission.attempt
+            parent_report = find_report_for_submission(db, submission.parent_submission_id)
+            if parent_report and parent_report.payload:
+                payload["comparison"] = build_retry_comparison(parent_report.payload, payload)
+                payload["parent_report_id"] = parent_report.id
 
         append_step(job, "generate_report")
         report = Report(grading_job_id=job.id, user_id=job.user_id, payload=payload)

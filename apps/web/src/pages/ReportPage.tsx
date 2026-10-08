@@ -57,6 +57,25 @@ export default function ReportPage() {
   const displayMode = p.display_mode === "reference_only";
   const maxScore = Number(p.max_score ?? 10);
   const range = (p.score_range as number[]) ?? [];
+  const comparison = p.comparison as
+    | {
+        first_score?: number;
+        second_score?: number;
+        score_delta?: number;
+        first_hit_rate?: number;
+        second_hit_rate?: number;
+        hit_rate_delta?: number;
+        issue_changes?: { tag?: string; label?: string; status?: string }[];
+      }
+    | undefined;
+
+  const ISSUE_STATUS: Record<string, string> = {
+    improved: "已改善",
+    resolved: "已解决",
+    unchanged: "未变",
+    worse: "加重",
+    new: "新出现",
+  };
 
   return (
     <Card
@@ -89,7 +108,42 @@ export default function ReportPage() {
         </Tag>
         <Tag>共识一致率 {String(p.consensus_rate ?? "-")}%</Tag>
         {p.from_cache ? <Tag>缓存命中</Tag> : null}
+        {p.attempt ? <Tag>第 {String(p.attempt)} 稿</Tag> : null}
       </Space>
+
+      {comparison && (
+        <Alert
+          type="success"
+          showIcon
+          style={{ marginTop: 16 }}
+          message="二次批改对比"
+          description={
+            <Space direction="vertical">
+              <span>
+                分数 {comparison.first_score} → {comparison.second_score}（
+                {comparison.score_delta != null && comparison.score_delta >= 0 ? "+" : ""}
+                {comparison.score_delta}）
+              </span>
+              <span>
+                维度命中率 {comparison.first_hit_rate}% → {comparison.second_hit_rate}%（
+                {comparison.hit_rate_delta != null && comparison.hit_rate_delta >= 0 ? "+" : ""}
+                {comparison.hit_rate_delta}%）
+              </span>
+              {(comparison.issue_changes ?? []).length > 0 && (
+                <List
+                  size="small"
+                  dataSource={comparison.issue_changes}
+                  renderItem={(c) => (
+                    <List.Item>
+                      {c.label ?? c.tag} — {ISSUE_STATUS[c.status ?? ""] ?? c.status}
+                    </List.Item>
+                  )}
+                />
+              )}
+            </Space>
+          }
+        />
+      )}
 
       <div style={{ marginTop: 16 }}>
         <Collapse
@@ -173,8 +227,8 @@ export default function ReportPage() {
               </List.Item>
             )}
           />
-          <Button type="primary" block style={{ marginTop: 16 }} disabled>
-            重新作答（P5 开放）
+          <Button type="primary" block style={{ marginTop: 16 }}>
+            <Link to={`/reports/${reportId}/retry`}>重新作答</Link>
           </Button>
         </Col>
       </Row>

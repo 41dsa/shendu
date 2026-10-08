@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.database import Base, engine
-from app.routers import admin, ai_config, auth, exam, grading, license, questions, submissions
+from app.routers import admin, ai_config, auth, coach, exam, grading, license, questions, submissions
 
 
 @asynccontextmanager
@@ -32,6 +32,7 @@ app.include_router(exam.router)
 app.include_router(questions.router)
 app.include_router(submissions.router)
 app.include_router(grading.router)
+app.include_router(coach.router)
 
 
 @app.get("/health")

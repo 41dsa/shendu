@@ -37,10 +37,10 @@ DEMO_ESSAY = Question(
         "exam": "国考副省级",
     },
     scoring_points=[
-        {"id": "D01", "label": "立意与观点", "max_score": 10, "required": True},
-        {"id": "D02", "label": "结构与层次", "max_score": 10, "required": True},
-        {"id": "D03", "label": "论证与素材", "max_score": 10, "required": True},
-        {"id": "D04", "label": "语言表达", "max_score": 10, "required": True},
+        {"id": "D01", "label": "立意与观点", "max_score": 10, "required": True, "ability": "A1"},
+        {"id": "D02", "label": "结构与层次", "max_score": 10, "required": True, "ability": "A2"},
+        {"id": "D03", "label": "论证与素材", "max_score": 10, "required": True, "ability": "A3"},
+        {"id": "D04", "label": "语言表达", "max_score": 10, "required": True, "ability": "A4"},
     ],
 )
 
@@ -60,6 +60,18 @@ def ensure_question_columns() -> None:
             )
         )
         conn.execute(text("DELETE FROM questions WHERE title = '基层治理存在问题归纳'"))
+
+
+def ensure_submission_columns() -> None:
+    insp = inspect(engine)
+    if "submissions" not in insp.get_table_names():
+        return
+    cols = {c["name"] for c in insp.get_columns("submissions")}
+    with engine.begin() as conn:
+        if "parent_submission_id" not in cols:
+            conn.execute(text("ALTER TABLE submissions ADD COLUMN parent_submission_id VARCHAR(36)"))
+        if "attempt" not in cols:
+            conn.execute(text("ALTER TABLE submissions ADD COLUMN attempt INTEGER DEFAULT 1"))
 
 
 def upsert_demo_essay(db) -> None:
@@ -84,6 +96,7 @@ def upsert_demo_essay(db) -> None:
 def main() -> None:
     Base.metadata.create_all(bind=engine)
     ensure_question_columns()
+    ensure_submission_columns()
     db = SessionLocal()
     try:
         upsert_demo_essay(db)

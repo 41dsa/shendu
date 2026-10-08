@@ -49,3 +49,18 @@ def essay_length_ratio(char_count: int, word_min: int) -> float:
 
 def issue_tag_prompt_hint() -> str:
     return "、".join(f"{t['code']} {t['label']}" for t in ESSAY_ISSUE_TAGS)
+
+
+def label_to_ability(label: str) -> str:
+    """Rubric 维度名称 → 能力维 ID（A1～A5）。"""
+    if "立意" in label or "观点" in label:
+        return "A1"
+    if "结构" in label:
+        return "A2"
+    if "论证" in label or "素材" in label:
+        return "A3"
+    if "语言" in label:
+        return "A4"
+    if "字数" in label or "规范" in label:
+        return "A5"
+    return "A1"

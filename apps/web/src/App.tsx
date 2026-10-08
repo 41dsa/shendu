@@ -11,6 +11,9 @@ import PurchasePage from "./pages/PurchasePage";
 import RegisterPage from "./pages/RegisterPage";
 import ReportListPage from "./pages/ReportListPage";
 import ReportPage from "./pages/ReportPage";
+import RetryAnswerPage from "./pages/RetryAnswerPage";
+import AbilitiesPage from "./pages/AbilitiesPage";
+import IssueBookPage from "./pages/IssueBookPage";
 import SettingsAiPage from "./pages/SettingsAiPage";
 import ExamProfilePage from "./pages/ExamProfilePage";
 
@@ -31,6 +34,9 @@ export default function App() {
             <Route path="/grading/jobs/:jobId" element={<GradingProgressPage />} />
             <Route path="/reports" element={<ReportListPage />} />
             <Route path="/reports/:reportId" element={<ReportPage />} />
+            <Route path="/reports/:reportId/retry" element={<RetryAnswerPage />} />
+            <Route path="/abilities" element={<AbilitiesPage />} />
+            <Route path="/issues" element={<IssueBookPage />} />
             <Route path="/admin/codes" element={<AdminCodesPage />} />
           </Route>
         </Route>

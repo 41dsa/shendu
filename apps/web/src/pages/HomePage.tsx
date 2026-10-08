@@ -65,6 +65,18 @@ export default function HomePage() {
   const licensed = !!ent?.licensed;
   const ready = licensed && !!ent?.has_primary_ai_key;
 
+  const { data: coachHome } = useQuery({
+    queryKey: ["coach-home"],
+    queryFn: () =>
+      api<{
+        focus_issue?: { label: string; count: number };
+        today_training?: { title: string; reason: string; progress_done: number; progress_target: number };
+        abilities?: { overall: number | null; dimensions: { name: string; score: number | null }[] };
+        recent_reports?: ReportItem[];
+      }>("/coach/home"),
+    enabled: licensed,
+  });
+
   const { data: reports } = useQuery({
     queryKey: ["reports"],
     queryFn: () => api<ReportItem[]>("/reports"),
@@ -84,7 +96,9 @@ export default function HomePage() {
   const dims = dimensionProgress(payload.scoring_points as ScoringPoint[] | undefined);
   const issues = (payload.issues as Issue[] | undefined)?.slice(0, 2) ?? [];
   const featured = questions?.[0];
-  const recent = reports?.slice(0, 3) ?? [];
+  const recent = coachHome?.recent_reports ?? reports?.slice(0, 3) ?? [];
+  const focusFromCoach = coachHome?.focus_issue;
+  const training = coachHome?.today_training;
 
   return (
     <Space direction="vertical" size="large" style={{ width: "100%" }}>
@@ -141,6 +155,16 @@ export default function HomePage() {
           }
           showIcon
         />
+      )}
+
+      {training && licensed && (
+        <Card title="今日训练（推荐）" extra={<Tag>{training.progress_done}/{training.progress_target}</Tag>}>
+          <Typography.Text strong>{training.title}</Typography.Text>
+          <Typography.Paragraph type="secondary">{training.reason}</Typography.Paragraph>
+          <Button>
+            <Link to="/grading">去练习</Link>
+          </Button>
+        </Card>
       )}
 
       <Row gutter={16}>
@@ -244,12 +268,14 @@ export default function HomePage() {
             <List
               size="small"
               dataSource={
-                issues.length
-                  ? issues.map((i) => ({
-                      tag: i.tag ?? "问题",
-                      tip: i.explanation ?? "见最近报告详情",
-                    }))
-                  : DEFAULT_FOCUS
+                focusFromCoach
+                  ? [{ tag: focusFromCoach.label, tip: `近 ${focusFromCoach.count} 次批改出现，建议优先修改后二次作答。` }]
+                  : issues.length
+                    ? issues.map((i) => ({
+                        tag: i.tag ?? "问题",
+                        tip: i.explanation ?? "见最近报告详情",
+                      }))
+                    : DEFAULT_FOCUS
               }
               renderItem={(item) => (
                 <List.Item>

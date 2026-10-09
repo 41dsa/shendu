@@ -17,6 +17,7 @@ from app.models.entities import (
 )
 from app.schemas.submission import SubmissionResponse, SubmissionUpsert, SubmitGradingResponse
 from app.services.ai_client import get_credential
+from app.services.events_service import track_event
 from app.worker.tasks import enqueue_grading_job
 
 router = APIRouter(prefix="/submissions", tags=["submissions"])
@@ -91,4 +92,5 @@ def submit_grade(
     db.commit()
     db.refresh(job)
     enqueue_grading_job(job.id)
+    track_event(db, "grading_submit", user.id, job_id=job.id, question_id=sub.question_id)
     return SubmitGradingResponse(grading_job_id=job.id, submission_id=sub.id)

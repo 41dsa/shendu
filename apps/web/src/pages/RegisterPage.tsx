@@ -13,7 +13,8 @@ export default function RegisterPage() {
       });
       setToken(res.access_token);
       message.success("注册成功");
-      navigate("/purchase");
+      const me = await api<{ role: string }>("/auth/me");
+      navigate(me.role === "admin" ? "/admin" : "/purchase");
     } catch (e) {
       message.error(String(e));
     }

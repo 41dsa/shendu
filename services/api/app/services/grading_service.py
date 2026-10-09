@@ -18,6 +18,7 @@ from app.models.entities import (
 from app.services.ai_client import AiCallError, chat_completion_json, get_credential
 from app.domain.essay import essay_length_ratio, essay_word_bounds, issue_tag_prompt_hint
 from app.services.coach_service import build_retry_comparison, find_report_for_submission
+from app.services.prompt_service import get_active_grading_system_prompt
 from app.services.grading_helpers import (
     answer_hash,
     build_scoring_basis,
@@ -225,7 +226,8 @@ async def run_grading_job(db: Session, job_id: str) -> None:
         append_step(job, "llm_score", "calling")
         db.commit()
 
-        raw, usage = await chat_completion_json(cred, SYSTEM_PROMPT, user_prompt)
+        system_prompt = get_active_grading_system_prompt(db, SYSTEM_PROMPT)
+        raw, usage = await chat_completion_json(cred, system_prompt, user_prompt)
         log_usage(db, job.user_id, job.id, cred, usage, "primary")
         payload = json.loads(raw)
 

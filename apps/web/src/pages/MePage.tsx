@@ -56,7 +56,7 @@ export default function MePage() {
         showIcon
         style={{ marginTop: 24 }}
         message="评分争议"
-        description={data?.dispute.message ?? "即将开放"}
+        description="可在任意批改报告页点击「评分争议」提交；教研在后台处理。"
       />
     </Card>
   );

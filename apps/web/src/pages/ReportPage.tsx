@@ -1,5 +1,6 @@
-import { Alert, Button, Card, Col, Collapse, List, Row, Space, Tag, Typography } from "antd";
-import { useQuery } from "@tanstack/react-query";
+import { Alert, Button, Card, Col, Collapse, Input, List, Modal, Row, Space, Tag, Typography, message } from "antd";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api } from "../api/client";
 
@@ -41,11 +42,28 @@ const CONF_LABEL: Record<string, string> = {
 
 export default function ReportPage() {
   const { reportId } = useParams();
+  const qc = useQueryClient();
+  const [disputeOpen, setDisputeOpen] = useState(false);
+  const [disputeReason, setDisputeReason] = useState("");
   const { data } = useQuery({
     queryKey: ["report", reportId],
     enabled: !!reportId,
     queryFn: () => api<{ id: string; payload: Record<string, unknown> }>(`/reports/${reportId}`),
   });
+  const submitDispute = useMutation({
+    mutationFn: () =>
+      api(`/reports/${reportId}/disputes`, {
+        method: "POST",
+        body: JSON.stringify({ reason: disputeReason }),
+      }),
+    onSuccess: () => {
+      message.success("争议已提交");
+      setDisputeOpen(false);
+      qc.invalidateQueries({ queryKey: ["me-summary"] });
+    },
+    onError: (e) => message.error(String(e)),
+  });
+
   const { data: basisData } = useQuery({
     queryKey: ["report-basis", reportId],
     enabled: !!reportId,
@@ -81,9 +99,12 @@ export default function ReportPage() {
     <Card
       title="批改报告"
       extra={
-        <Button>
-          <Link to="/reports">全部报告</Link>
-        </Button>
+        <Space>
+          <Button onClick={() => setDisputeOpen(true)}>评分争议</Button>
+          <Button>
+            <Link to="/reports">全部报告</Link>
+          </Button>
+        </Space>
       }
     >
       {displayMode && (
@@ -232,6 +253,20 @@ export default function ReportPage() {
           </Button>
         </Col>
       </Row>
+      <Modal
+        title="提交评分争议"
+        open={disputeOpen}
+        onCancel={() => setDisputeOpen(false)}
+        onOk={() => submitDispute.mutate()}
+        confirmLoading={submitDispute.isPending}
+      >
+        <Input.TextArea
+          rows={4}
+          value={disputeReason}
+          onChange={(e) => setDisputeReason(e.target.value)}
+          placeholder="请说明您认为评分不合理的原因（至少 5 字）"
+        />
+      </Modal>
     </Card>
   );
 }

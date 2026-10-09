@@ -9,7 +9,8 @@ from sqlalchemy import inspect, text
 
 from app.config import settings
 from app.database import Base, SessionLocal, engine
-from app.models.entities import Question, QuestionType, RedeemCode, RedeemCodeStatus
+from app.models.entities import PromptPurpose, PromptVersion, Question, QuestionType, RedeemCode, RedeemCodeStatus
+from app.services.grading_service import SYSTEM_PROMPT
 
 DEV_TEST_CODE = "TEST-DEV-LICENSE"
 DEMO_QUESTION_ID = "demo-essay-001"
@@ -93,6 +94,19 @@ def upsert_demo_essay(db) -> None:
     db.add(DEMO_ESSAY)
 
 
+def seed_default_prompt(db) -> None:
+    if db.query(PromptVersion).first():
+        return
+    db.add(
+        PromptVersion(
+            name="内置大作文批改 v1",
+            purpose=PromptPurpose.essay_grading,
+            content=SYSTEM_PROMPT,
+            is_active=True,
+        )
+    )
+
+
 def main() -> None:
     Base.metadata.create_all(bind=engine)
     ensure_question_columns()
@@ -100,6 +114,7 @@ def main() -> None:
     db = SessionLocal()
     try:
         upsert_demo_essay(db)
+        seed_default_prompt(db)
         dev_code = db.get(RedeemCode, DEV_TEST_CODE)
         if not dev_code:
             db.add(RedeemCode(code=DEV_TEST_CODE, sku="lifetime_web", batch_id="dev"))

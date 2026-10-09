@@ -1,4 +1,4 @@
-import { Alert, Button, Card, Col, List, Progress, Row, Space, Statistic, Tag, Typography } from "antd";
+import { Alert, Button, Card, Col, List, Progress, Row, Space, Spin, Statistic, Tag, Typography } from "antd";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { api } from "../api/client";
@@ -90,7 +90,13 @@ export default function HomePage() {
     queryFn: () => api<{ payload: Record<string, unknown> }>(`/reports/${latestReportId}`),
   });
 
-  if (entLoading) return null;
+  if (entLoading) {
+    return (
+      <div style={{ display: "flex", justifyContent: "center", padding: 48 }}>
+        <Spin size="large" tip="加载中…" />
+      </div>
+    );
+  }
 
   const payload = latestDetail?.payload ?? {};
   const dims = dimensionProgress(payload.scoring_points as ScoringPoint[] | undefined);

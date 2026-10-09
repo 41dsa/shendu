@@ -1,34 +1,11 @@
-import { Button, Layout, Menu, Space, Typography } from "antd";
-import {
-  EditOutlined,
-  FileTextOutlined,
-  FundOutlined,
-  HomeOutlined,
-  ReadOutlined,
-  UnorderedListOutlined,
-  LogoutOutlined,
-  SettingOutlined,
-  ThunderboltOutlined,
-  UserOutlined,
-} from "@ant-design/icons";
+import { Button, Layout, Menu, Space, Tag, Typography } from "antd";
+import { LogoutOutlined } from "@ant-design/icons";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
+import { buildAppSidebarMenu } from "../config/sidebarMenu";
 import { api, logout } from "../api/client";
 
 const { Sider, Content, Header } = Layout;
-
-const items = [
-  { key: "/", icon: <HomeOutlined />, label: "首页" },
-  { key: "/grading", icon: <EditOutlined />, label: "批改" },
-  { key: "/training", icon: <ReadOutlined />, label: "AI 训练" },
-  { key: "/reports", icon: <FileTextOutlined />, label: "批改报告" },
-  { key: "/abilities", icon: <FundOutlined />, label: "能力画像" },
-  { key: "/issues", icon: <UnorderedListOutlined />, label: "问题本" },
-  { key: "/me", icon: <UserOutlined />, label: "我的" },
-  { key: "/purchase", icon: <ThunderboltOutlined />, label: "购买/激活" },
-  { key: "/settings/ai", icon: <SettingOutlined />, label: "AI 设置" },
-  { key: "/settings/exam", icon: <SettingOutlined />, label: "考试目标" },
-];
 
 export default function AppLayout() {
   const navigate = useNavigate();
@@ -36,14 +13,25 @@ export default function AppLayout() {
   const location = useLocation();
   const { data: me } = useQuery({
     queryKey: ["me"],
-    queryFn: () => api<{ email: string }>("/auth/me"),
+    queryFn: () => api<{ email: string; role: string }>("/auth/me"),
   });
+
+  const isAdmin = me?.role === "admin";
+  const menuItems = buildAppSidebarMenu(isAdmin);
 
   const selected = (() => {
     if (location.pathname.startsWith("/grading/jobs")) return "/grading";
     if (location.pathname.startsWith("/reports/")) return "/reports";
-    const hit = items.find((i) => location.pathname === i.key || location.pathname.startsWith(i.key + "/"));
-    return hit?.key ?? "/";
+    if (location.pathname.startsWith("/admin")) return "/admin/questions";
+    const flatKeys = menuItems.flatMap((item) => {
+      if (!item || typeof item !== "object") return [];
+      if ("children" in item && item.children) {
+        return item.children.map((c) => (c && "key" in c ? String(c.key) : ""));
+      }
+      return "key" in item ? [String(item.key)] : [];
+    });
+    const hit = flatKeys.find((k) => k && (location.pathname === k || location.pathname.startsWith(`${k}/`)));
+    return hit ?? (isAdmin ? "/grading" : "/");
   })();
 
   const handleLogout = () => {
@@ -62,11 +50,16 @@ export default function AppLayout() {
         style={{ borderRight: "1px solid #f0f0f0" }}
       >
         <div style={{ padding: 16, fontWeight: 700, color: "#1677ff" }}>智观申论</div>
-        <Menu mode="inline" selectedKeys={[selected]} items={items} onClick={(e) => navigate(e.key)} />
+        {isAdmin && (
+          <div style={{ padding: "0 16px 8px" }}>
+            <Tag color="blue">体验用户端</Tag>
+          </div>
+        )}
+        <Menu mode="inline" selectedKeys={[selected]} items={menuItems} onClick={(e) => navigate(e.key)} />
       </Sider>
       <Layout>
         <Header className="app-header">
-          <span className="app-header-title">AI申论教练</span>
+          <span className="app-header-title">{isAdmin ? "AI申论教练 · 验货" : "AI申论教练"}</span>
           <Space>
             {me?.email && (
               <Typography.Text type="secondary" className="app-header-email">

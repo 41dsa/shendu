@@ -3,7 +3,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any, Optional
 
-from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, Enum, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy import JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -239,6 +239,87 @@ class TrainingRecord(Base):
     question_id: Mapped[Optional[str]] = mapped_column(ForeignKey("questions.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class PromptPurpose(str, enum.Enum):
+    essay_grading = "essay_grading"
+    essay_consensus = "essay_consensus"
+
+
+class PromptVersion(Base):
+    """批改 Prompt 版本（BE-603）；仅一条 is_active=true 生效。"""
+
+    __tablename__ = "prompt_versions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    name: Mapped[str] = mapped_column(String(128))
+    purpose: Mapped[PromptPurpose] = mapped_column(Enum(PromptPurpose), default=PromptPurpose.essay_grading)
+    content: Mapped[str] = mapped_column(Text)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class GoldSample(Base):
+    """金标答案样本（BE-604）。"""
+
+    __tablename__ = "gold_samples"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    question_id: Mapped[str] = mapped_column(ForeignKey("questions.id"), index=True)
+    title: Mapped[str] = mapped_column(String(255))
+    reference_answer: Mapped[str] = mapped_column(Text)
+    expected_score_min: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    expected_score_max: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class GoldRun(Base):
+    """金标回归跑分结果（BE-605）。"""
+
+    __tablename__ = "gold_runs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    gold_sample_id: Mapped[str] = mapped_column(ForeignKey("gold_samples.id"), index=True)
+    ai_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    expected_mid: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    score_delta: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    consensus_rate: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    report_id: Mapped[Optional[str]] = mapped_column(ForeignKey("reports.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class DisputeStatus(str, enum.Enum):
+    pending = "pending"
+    ai_reviewed = "ai_reviewed"
+    closed = "closed"
+
+
+class ScoreDispute(Base):
+    """用户评分争议（BE-606/607）。"""
+
+    __tablename__ = "score_disputes"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    report_id: Mapped[str] = mapped_column(ForeignKey("reports.id"), index=True)
+    reason: Mapped[str] = mapped_column(Text)
+    status: Mapped[DisputeStatus] = mapped_column(Enum(DisputeStatus), default=DisputeStatus.pending)
+    ai_review_note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    resolved_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class AnalyticsEvent(Base):
+    """关键埋点（BE-608）。"""
+
+    __tablename__ = "analytics_events"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id: Mapped[Optional[str]] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
+    event_name: Mapped[str] = mapped_column(String(64), index=True)
+    properties: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
 class UserAiUsage(Base):

@@ -14,7 +14,8 @@ export default function LoginPage() {
       });
       setToken(res.access_token);
       message.success("登录成功");
-      navigate("/");
+      const me = await api<{ role: string }>("/auth/me");
+      navigate(me.role === "admin" ? "/admin" : "/");
     } catch (e) {
       message.error(String(e));
     }

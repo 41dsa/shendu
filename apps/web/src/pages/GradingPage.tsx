@@ -1,9 +1,10 @@
-import { Button, Card, Col, Input, List, Row, Space, Tag, Typography, message } from "antd";
+import { Alert, Button, Card, Col, Input, List, Row, Space, Tag, Typography, message } from "antd";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { api } from "../api/client";
 import GradingJobPanel from "../components/GradingJobPanel";
+import ActivationRequiredNotice from "../components/ActivationRequiredNotice";
 import { useEntitlement } from "../hooks/useEntitlement";
 
 type Q = {
@@ -75,9 +76,27 @@ export default function GradingPage() {
   const wordMin = detail?.word_min ?? 800;
   const wordMax = detail?.word_limit ?? 1200;
 
+  const needsKey = ent?.licensed && !ent?.has_primary_ai_key;
+
   return (
     <>
       {activeJobId ? <GradingJobPanel jobId={activeJobId} onClose={clearJob} /> : null}
+
+      {!ent?.licensed ? <ActivationRequiredNotice variant="banner" feature="大作文批改" /> : null}
+      {needsKey ? (
+        <Alert
+          type="info"
+          showIcon
+          message="请先配置 AI Key"
+          description="激活后需在「AI 设置」中填写 DeepSeek 或 OpenAI 兼容 API Key，才能提交批改。"
+          action={
+            <Button size="small" type="primary">
+              <Link to="/settings/ai">去配置</Link>
+            </Button>
+          }
+          style={{ marginBottom: 16 }}
+        />
+      ) : null}
 
       <Row gutter={16}>
         <Col span={6}>

@@ -56,7 +56,9 @@ npm run dev
 1. 注册 → 兑换激活码 `TEST-DEV-LICENSE` → 配置 DeepSeek（或 OpenAI 兼容）API Key → 测试连接  
 2. 保存考试目标 → 批改页选择大作文题 → 撰写全文并提交批改 → 查看报告  
 
-本地更新题库为「大作文」示例：`python scripts/init_db.py`（会 upsert `demo-essay-001`）。
+本地初始化：`python scripts/init_db.py`（占位题 + demo 参考题 `demo-essay-001`）。  
+金标验收：`python scripts/seed_gold_cases.py`（QA-702 三例）。  
+SQLite 备份：`bash scripts/backup_sqlite.sh`。
 
 管理员：`.env` 设置 `BOOTSTRAP_ADMIN_EMAIL` 与注册邮箱一致 → `/admin/codes` 生成爱发电发货码  
 

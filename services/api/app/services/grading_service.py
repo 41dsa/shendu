@@ -60,7 +60,11 @@ _SYSTEM_PROMPT_TEMPLATE = """你是申论大作文阅卷专家（不是小题概
 scoring_points 对应题目给出的维度（如立意、结构、论证、语言）。勿按「从材料摘抄要点」方式评分。
 issues 最多 3 条；suggestions 3～5 条。tag 必须使用 PRD 编号+名称，例如："""
 
-SYSTEM_PROMPT = _SYSTEM_PROMPT_TEMPLATE + issue_tag_prompt_hint() + "。"
+SYSTEM_PROMPT = (
+    _SYSTEM_PROMPT_TEMPLATE
+    + issue_tag_prompt_hint()
+    + "。JSON 顶层键名必须使用英文：total_score, score_range, scoring_points, issues, suggestions, review_notes（勿改用中文键）。"
+)
 
 CONSENSUS_PROMPT = """你是申论大作文严格阅卷人。根据题干与用户作文，仅输出 JSON：{"score": number}。"""
 

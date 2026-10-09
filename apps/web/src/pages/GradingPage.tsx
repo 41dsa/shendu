@@ -1,7 +1,7 @@
 import { Alert, Button, Card, Col, Input, Row, Space, Typography, Upload, message } from "antd";
 import { InboxOutlined, UploadOutlined } from "@ant-design/icons";
 import { useMutation } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import type { UploadProps } from "antd";
 import { api } from "../api/client";
@@ -11,6 +11,19 @@ import { useEntitlement } from "../hooks/useEntitlement";
 
 const WORD_MIN = 800;
 const WORD_MAX = 1200;
+const DRAFT_KEY = "shendu_grading_draft_v1";
+
+type GradingDraft = { userPrompt: string; userMaterial: string; answer: string };
+
+function loadDraft(): GradingDraft | null {
+  try {
+    const raw = localStorage.getItem(DRAFT_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw) as GradingDraft;
+  } catch {
+    return null;
+  }
+}
 
 async function readTextFile(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -26,9 +39,22 @@ export default function GradingPage() {
   const activeJobId = searchParams.get("job");
 
   const { data: ent } = useEntitlement();
-  const [userPrompt, setUserPrompt] = useState("");
-  const [userMaterial, setUserMaterial] = useState("");
-  const [answer, setAnswer] = useState("");
+  const initial = loadDraft();
+  const [userPrompt, setUserPrompt] = useState(initial?.userPrompt ?? "");
+  const [userMaterial, setUserMaterial] = useState(initial?.userMaterial ?? "");
+  const [answer, setAnswer] = useState(initial?.answer ?? "");
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => {
+      const draft: GradingDraft = { userPrompt, userMaterial, answer };
+      localStorage.setItem(DRAFT_KEY, JSON.stringify(draft));
+    }, 800);
+    return () => {
+      if (saveTimer.current) clearTimeout(saveTimer.current);
+    };
+  }, [userPrompt, userMaterial, answer]);
 
   const submit = useMutation({
     mutationFn: async () => {
@@ -48,6 +74,7 @@ export default function GradingPage() {
     },
     onSuccess: (res) => {
       message.success("已提交大作文批改，请在本页顶部查看进度");
+      localStorage.removeItem(DRAFT_KEY);
       setSearchParams({ job: res.grading_job_id });
     },
   });

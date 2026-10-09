@@ -1,3 +1,4 @@
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -5,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.database import Base, engine
+from app.middleware.access_log import SafeAccessLogMiddleware
 from app.routers import admin, admin_research, ai_config, auth, coach, disputes, exam, grading, license, questions, submissions
 
 
@@ -16,6 +18,9 @@ async def lifespan(_app: FastAPI):
 
 app = FastAPI(title="AI申论教练 API", version="0.1.1", lifespan=lifespan)
 
+logging.basicConfig(level=logging.INFO)
+
+app.add_middleware(SafeAccessLogMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origin_list,

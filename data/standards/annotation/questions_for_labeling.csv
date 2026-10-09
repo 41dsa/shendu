@@ -1,0 +1,22 @@
+question_id,title,expected_essay_form,expected_proposition_task,core_criteria_keywords,notes
+demo-essay-001,2024 国考副省级：数字化与治理能力,material_based,论证观点,立意与观点：观点|结构与层次：观点|论证与素材：观点|语言表达：观点清,auto:ai_self_consistency
+fa6ccbb4-1b05-41cb-b081-6c891b9d6840,2024国考副省级：共同富裕,topic,论证观点,立意与观点：观点|结构与层次：观点|论证与素材：观点|语言表达：观点清,auto:ai_self_consistency
+e7c6e970-9648-40ad-ac32-2046c4ac1f40,2024国考副省级：数字化与治理能力,material_based,论证观点,立意与观点：观点|结构与层次：观点|论证与素材：观点|语言表达：观点清,auto:ai_self_consistency
+d1411336-50bf-4d3b-805c-91a57e92fb98,2024国考副省级：文化软实力,material_based,论证观点,立意与观点：观点|结构与层次：观点|论证与素材：观点|语言表达：观点清,auto:ai_self_consistency
+cf14b7fa-00ad-4e54-a421-6e1bb92122d1,2024国考副省级：新质生产力,material_based,论证观点,立意与观点：观点|结构与层次：观点|论证与素材：观点|语言表达：观点清,auto:ai_self_consistency
+3716b672-4c58-4baa-a04d-5a24b0acc2c5,2024国考副省级：绿色转型,material_based,论证观点,立意与观点：观点|结构与层次：观点|论证与素材：观点|语言表达：观点清,auto:ai_self_consistency
+d9a1a38e-5f2f-416d-ad83-886b94168fae,2024国考市地级：城乡融合,topic,论证观点,立意与观点：观点|结构与层次：观点|论证与素材：观点|语言表达：观点清,auto:ai_self_consistency
+782831f7-0860-4709-b3a9-b3acb6dff78b,2024国考市地级：基层减负与担当,material_based,论证观点,立意与观点：观点|结构与层次：观点|论证与素材：观点|语言表达：观点清,auto:ai_self_consistency
+b2510a39-5bff-402d-bb0f-00aea339bee8,2024国考市地级：营商环境,topic,论证观点,立意与观点：观点|结构与层次：观点|论证与素材：观点|语言表达：观点清,auto:ai_self_consistency
+2c32904f-86ce-4be1-b57c-aa4105a7122d,2024国考市地级：青年与奋斗,topic,论证观点,立意与观点：观点|结构与层次：观点|论证与素材：观点|语言表达：观点清,auto:ai_self_consistency
+6c0c3095-6377-49f4-ba17-8803e854c71c,2024山东省考：海洋经济,topic,论证观点,立意与观点：观点|结构与层次：观点|论证与素材：观点|语言表达：观点清,auto:ai_self_consistency
+b375490e-060e-4a17-9db7-96748d69b270,2024广东省考：粤港澳大湾区,topic,论证观点,立意与观点：观点|结构与层次：观点|论证与素材：观点|语言表达：观点清,auto:ai_self_consistency
+2421f7a3-d3b1-424e-9c1d-91fd93353f11,2024江苏省考：制造业升级,topic,论证观点,立意与观点：观点|结构与层次：观点|论证与素材：观点|语言表达：观点清,auto:ai_self_consistency
+d6662e03-e15c-4245-8161-11da9ff46d49,2024浙江省考：民营经济,topic,论证观点,立意与观点：观点|结构与层次：观点|论证与素材：观点|语言表达：观点清,auto:ai_self_consistency
+f432898d-c50b-460e-bfe2-82f1e17b71a1,2024湖北省考：科技创新,topic,论证观点,立意与观点：观点|结构与层次：观点|论证与素材：观点|语言表达：观点清,auto:ai_self_consistency
+b0bce5f4-7595-41e1-89fe-c44229de421b,2025国考副省级：区域协调,material_based,论证观点,立意与观点：观点|结构与层次：观点|论证与素材：观点|语言表达：观点清,auto:ai_self_consistency
+7ab5f0ba-dc26-4fbf-a0d7-f716d100f5d8,2025国考副省级：国家安全,topic,论证观点,立意与观点：观点|结构与层次：观点|论证与素材：观点|语言表达：观点清,auto:ai_self_consistency
+9470015e-9990-4f46-92de-93bb12b89175,2025国考市地级：人工智能治理,material_based,论证观点,立意与观点：观点|结构与层次：观点|论证与素材：观点|语言表达：观点清,auto:ai_self_consistency
+85195dd6-4ed7-475e-851d-59c98b09f236,2025国考市地级：消费提振,topic,论证观点,立意与观点：观点|结构与层次：观点|论证与素材：观点|语言表达：观点清,auto:ai_self_consistency
+e648c8c1-eaa5-44e3-a90a-928059b84c9a,2025国考市地级：银发经济,topic,论证观点,立意与观点：观点|结构与层次：观点|论证与素材：观点|语言表达：观点清,auto:ai_self_consistency
+51bb1829-e8c5-4ce7-95e1-a061b92cd896,测试标题,,,,

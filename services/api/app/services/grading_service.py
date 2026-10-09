@@ -159,7 +159,7 @@ async def run_grading_job(db: Session, job_id: str) -> None:
         job.error_message = "题目不存在"
         db.commit()
         return
-    ctx = resolve_essay_context(submission, question)
+    ctx = resolve_essay_context(submission, question, db)
 
     job.status = GradingJobStatus.running
     db.commit()
@@ -218,6 +218,9 @@ async def run_grading_job(db: Session, job_id: str) -> None:
                 "prompt": essay_prompt,
                 "reference_material": ctx.reference_material,
                 "rubric_dimensions": ctx.scoring_points,
+                "focus_points": ctx.focus_points,
+                "loss_rules": ctx.loss_rules,
+                "standard_version": ctx.standard_version,
                 "max_score": ctx.score,
                 "word_min": word_min,
                 "word_max": word_max,
@@ -300,7 +303,10 @@ async def run_grading_job(db: Session, job_id: str) -> None:
             "title": ctx.title,
             "prompt_excerpt": essay_prompt[:200],
             "has_user_material": bool(ctx.reference_material),
+            "standard_version": ctx.standard_version,
         }
+        if ctx.standard_version is not None:
+            payload["standard_version"] = ctx.standard_version
         payload["scoring_basis"] = build_scoring_basis(
             payload,
             {

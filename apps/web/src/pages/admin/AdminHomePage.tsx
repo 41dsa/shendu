@@ -2,6 +2,7 @@ import { Alert, Card, Col, Row, Space, Typography } from "antd";
 import { Link } from "react-router-dom";
 
 const LINKS = [
+  { to: "/admin/standards", title: "考试标准引擎", desc: "资料上传、标准生成任务、验证预览与发布（大作文 Rubric）。" },
   { to: "/admin/prompts", title: "Prompt 版本", desc: "管理大作文批改系统 Prompt，设为生效后用户批改立即使用新版本。" },
   { to: "/admin/gold", title: "金标回归", desc: "录入金标作文、跑分对比期望区间，监控 Prompt/模型漂移。" },
   { to: "/admin/questions", title: "金标参考题", desc: "维护评测用题干/材料（不对学员展示；用户端自备材料批改）。" },
@@ -18,7 +19,7 @@ export default function AdminHomePage() {
         type="info"
         showIcon
         message="V1 学员端：用户自备材料 + 题干 + 作文"
-        description="学员不再从题库选题。教研侧「金标参考题」仅用于金标跑分与回归；线上批改 Prompt 与维度规则在此后台维护。"
+        description="学员不再从题库选题。考试标准引擎支持纯 AI 无人值守（标准生成/发布/金标/自洽指标），见仓库 AI考试标准引擎/纯AI运行手册.md。"
       />
       <Row gutter={[16, 16]}>
         {LINKS.map((item) => (

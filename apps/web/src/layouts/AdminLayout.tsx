@@ -8,6 +8,7 @@ const { Sider, Content, Header } = Layout;
 
 const adminItems = [
   { key: "/admin", label: <Link to="/admin">概览</Link> },
+  { key: "/admin/standards", label: <Link to="/admin/standards">考试标准引擎</Link> },
   { key: "/admin/prompts", label: <Link to="/admin/prompts">Prompt 版本</Link> },
   { key: "/admin/gold", label: <Link to="/admin/gold">金标回归</Link> },
   { key: "/admin/questions", label: <Link to="/admin/questions">金标参考题</Link> },

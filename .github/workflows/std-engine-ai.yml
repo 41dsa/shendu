@@ -1,0 +1,52 @@
+name: STD Engine — Pure AI (M-STD-E-AI)
+
+on:
+  push:
+    paths:
+      - "services/api/**"
+      - "data/standards/**"
+      - ".github/workflows/std-engine-ai.yml"
+  pull_request:
+    paths:
+      - "services/api/**"
+      - "data/standards/**"
+      - ".github/workflows/std-engine-ai.yml"
+
+jobs:
+  mstd-e-ai:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/api
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: services/api/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Init DB and Alembic stamp
+        run: |
+          python scripts/init_db.py
+          alembic stamp head
+
+      - name: Pure AI pipeline (stub)
+        env:
+          STANDARD_GEN_MODE: stub
+          STANDARD_AI_ANNOTATION: "1"
+          STANDARD_AUTO_PUBLISH: "1"
+          STANDARD_AUTO_PUBLISH_FORCE: "1"
+        run: python scripts/run_pure_ai_pipeline.py --limit 25 --mode stub
+
+      - name: M-STD-E-AI milestone
+        run: python scripts/verify_mstd_e_ai_milestone.py
+
+      - name: Engineering smoke (no auto-publish)
+        env:
+          STANDARD_AUTO_PUBLISH: "0"
+        run: python scripts/verify_std_e_suite.py

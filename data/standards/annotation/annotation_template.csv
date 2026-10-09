@@ -1,0 +1,3 @@
+question_id,title,expected_essay_form,expected_proposition_task,core_criteria_keywords,notes
+,demo-essay-001,2024国考副省级：数字化与治理能力,material_based,论证观点,扣题|治理效能|结构完整|论据,人工填写 question_id；core 为 4～6 个核心评价点关键词，| 分隔
+,2024国考市地级：基层减负与担当,topic,论证观点,减负|担当|联系实际,示例行：导入题库后补 question_id

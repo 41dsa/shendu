@@ -12,6 +12,7 @@ from app.database import Base, SessionLocal, engine
 from app.domain.essay import DEFAULT_RUBRIC_DIMENSIONS, USER_ESSAY_QUESTION_ID
 from app.models.entities import PromptPurpose, PromptVersion, Question, QuestionType, RedeemCode, RedeemCodeStatus
 from app.services.grading_service import SYSTEM_PROMPT
+from app.services.standard_engine.prompt_defaults import STANDARD_PROMPT_BODIES, STANDARD_PROMPT_NAMES
 
 DEV_TEST_CODE = "TEST-DEV-LICENSE"
 DEMO_QUESTION_ID = "demo-essay-001"
@@ -77,6 +78,16 @@ def ensure_question_columns() -> None:
         conn.execute(text("DELETE FROM questions WHERE title = '基层治理存在问题归纳'"))
 
 
+def ensure_gold_run_columns() -> None:
+    insp = inspect(engine)
+    if "gold_runs" not in insp.get_table_names():
+        return
+    cols = {c["name"] for c in insp.get_columns("gold_runs")}
+    with engine.begin() as conn:
+        if "standard_version" not in cols:
+            conn.execute(text("ALTER TABLE gold_runs ADD COLUMN standard_version INTEGER"))
+
+
 def ensure_submission_columns() -> None:
     insp = inspect(engine)
     if "submissions" not in insp.get_table_names():
@@ -124,7 +135,7 @@ def upsert_demo_essay(db) -> None:
 
 
 def seed_default_prompt(db) -> None:
-    if db.query(PromptVersion).first():
+    if db.query(PromptVersion).filter(PromptVersion.purpose == PromptPurpose.essay_grading).first():
         return
     db.add(
         PromptVersion(
@@ -136,15 +147,32 @@ def seed_default_prompt(db) -> None:
     )
 
 
+def seed_standard_prompts(db) -> None:
+    for purpose_key, body in STANDARD_PROMPT_BODIES.items():
+        purpose = PromptPurpose(purpose_key)
+        if db.query(PromptVersion).filter(PromptVersion.purpose == purpose).first():
+            continue
+        db.add(
+            PromptVersion(
+                name=STANDARD_PROMPT_NAMES[purpose_key],
+                purpose=purpose,
+                content=body,
+                is_active=True,
+            )
+        )
+
+
 def main() -> None:
     Base.metadata.create_all(bind=engine)
     ensure_question_columns()
     ensure_submission_columns()
+    ensure_gold_run_columns()
     db = SessionLocal()
     try:
         upsert_demo_essay(db)
         upsert_user_essay_placeholder(db)
         seed_default_prompt(db)
+        seed_standard_prompts(db)
         dev_code = db.get(RedeemCode, DEV_TEST_CODE)
         if not dev_code:
             db.add(RedeemCode(code=DEV_TEST_CODE, sku="lifetime_web", batch_id="dev"))
@@ -155,7 +183,8 @@ def main() -> None:
         db.commit()
         print(
             f"DB initialized. User essay: {USER_ESSAY_QUESTION_ID}. "
-            f"Demo bank: {DEMO_QUESTION_ID}. Test code: {DEV_TEST_CODE}"
+            f"Demo bank: {DEMO_QUESTION_ID}. Test code: {DEV_TEST_CODE}\n"
+            f"首次启用 Alembic: alembic stamp head  （见 AI考试标准引擎/运维说明-标准引擎.md）"
         )
     finally:
         db.close()

@@ -246,6 +246,35 @@ class TrainingRecord(Base):
 class PromptPurpose(str, enum.Enum):
     essay_grading = "essay_grading"
     essay_consensus = "essay_consensus"
+    standard_p01 = "standard_p01"
+    standard_p02 = "standard_p02"
+    standard_p03 = "standard_p03"
+    standard_p04 = "standard_p04"
+    standard_p05 = "standard_p05"
+    standard_p06 = "standard_p06"
+    standard_p07 = "standard_p07"
+
+
+class SourceLevel(str, enum.Enum):
+    S = "S"
+    A = "A"
+    B = "B"
+    C = "C"
+
+
+class StandardGenerationJobStatus(str, enum.Enum):
+    pending = "pending"
+    running = "running"
+    validated = "validated"
+    published = "published"
+    failed = "failed"
+
+
+class ExamQuestionStandardStatus(str, enum.Enum):
+    draft = "draft"
+    in_review = "in_review"
+    published = "published"
+    archived = "archived"
 
 
 class PromptVersion(Base):
@@ -287,6 +316,7 @@ class GoldRun(Base):
     expected_mid: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     score_delta: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     consensus_rate: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    standard_version: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     report_id: Mapped[Optional[str]] = mapped_column(ForeignKey("reports.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
@@ -330,9 +360,89 @@ class UserAiUsage(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
     grading_job_id: Mapped[Optional[str]] = mapped_column(ForeignKey("grading_jobs.id"), nullable=True)
+    standard_generation_job_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
     model: Mapped[str] = mapped_column(String(128))
     provider_base_url: Mapped[str] = mapped_column(String(512))
     tokens_in: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     tokens_out: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     call_type: Mapped[str] = mapped_column(String(32), default="primary")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class StandardDocument(Base):
+    """考试标准引擎 — 资料（M1）。"""
+
+    __tablename__ = "standard_documents"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    title: Mapped[str] = mapped_column(String(255))
+    source: Mapped[str] = mapped_column(String(32), default="manual_upload")
+    source_level: Mapped[SourceLevel] = mapped_column(Enum(SourceLevel), default=SourceLevel.B)
+    exam: Mapped[str] = mapped_column(String(64), default="")
+    year: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    content: Mapped[str] = mapped_column(Text, default="")
+    storage_uri: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class StandardGenerationJob(Base):
+    """标准生成任务（Celery 步骤机）。"""
+
+    __tablename__ = "standard_generation_jobs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    question_id: Mapped[str] = mapped_column(ForeignKey("questions.id"), index=True)
+    created_by_user_id: Mapped[Optional[str]] = mapped_column(ForeignKey("users.id"), nullable=True)
+    status: Mapped[StandardGenerationJobStatus] = mapped_column(
+        Enum(StandardGenerationJobStatus), default=StandardGenerationJobStatus.pending
+    )
+    current_step: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    document_ids: Mapped[list[Any]] = mapped_column(JSON, default=list)
+    error_message: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class StandardJobStep(Base):
+    __tablename__ = "standard_job_steps"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    job_id: Mapped[str] = mapped_column(ForeignKey("standard_generation_jobs.id"), index=True)
+    step: Mapped[str] = mapped_column(String(64))
+    detail: Mapped[str] = mapped_column(String(128), default="done")
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class StandardPipelineCache(Base):
+    """同题 + 同资料内容 + LLM 模式下的流水线结果缓存（跳过 P01～P05 调用）。"""
+
+    __tablename__ = "standard_pipeline_cache"
+
+    input_fingerprint: Mapped[str] = mapped_column(String(64), primary_key=True)
+    question_id: Mapped[str] = mapped_column(String(36), index=True)
+    gen_mode: Mapped[str] = mapped_column(String(16), default="llm")
+    source_job_id: Mapped[str] = mapped_column(String(36))
+    bundle: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class ExamQuestionStandard(Base):
+    """题目级考试标准发布包（M7）。"""
+
+    __tablename__ = "exam_question_standards"
+    __table_args__ = (UniqueConstraint("question_id", "version", name="uq_question_standard_version"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    question_id: Mapped[str] = mapped_column(ForeignKey("questions.id"), index=True)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    status: Mapped[ExamQuestionStandardStatus] = mapped_column(
+        Enum(ExamQuestionStandardStatus), default=ExamQuestionStandardStatus.draft
+    )
+    is_active: Mapped[bool] = mapped_column(Boolean, default=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    validation_result: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    published_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

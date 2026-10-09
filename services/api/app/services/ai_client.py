@@ -146,3 +146,32 @@ async def chat_completion_json(cred: UserProviderCredential, system: str, user: 
     content = data["choices"][0]["message"]["content"]
     usage = data.get("usage")
     return content, usage
+
+
+async def chat_completion_text(
+    cred: UserProviderCredential,
+    system: str,
+    user: str,
+    *,
+    temperature: float = 0.7,
+    max_tokens: int = 4096,
+) -> tuple[str, dict | None]:
+    api_key = decrypt_api_key(cred)
+    url = chat_completions_url(cred.base_url)
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    payload = {
+        "model": cred.model,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+    }
+    async with httpx.AsyncClient(timeout=180.0) as client:
+        resp = await client.post(url, json=payload, headers=headers)
+    if resp.status_code >= 400:
+        _raise_for_response(resp, context="模型调用失败")
+    data = resp.json()
+    content = data["choices"][0]["message"]["content"]
+    return content, data.get("usage")

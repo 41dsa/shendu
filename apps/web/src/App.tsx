@@ -11,6 +11,7 @@ import AdminGoldPage from "./pages/admin/AdminGoldPage";
 import AdminDisputesPage from "./pages/admin/AdminDisputesPage";
 import AdminJobsPage from "./pages/admin/AdminJobsPage";
 import AdminEventsPage from "./pages/admin/AdminEventsPage";
+import AdminStandardsPage from "./pages/admin/AdminStandardsPage";
 import ActivatePage from "./pages/ActivatePage";
 import GradingPage from "./pages/GradingPage";
 import GradingProgressPage from "./pages/GradingProgressPage";
@@ -67,6 +68,7 @@ export default function App() {
               <Route path="jobs" element={<AdminJobsPage />} />
               <Route path="codes" element={<AdminCodesPage />} />
               <Route path="events" element={<AdminEventsPage />} />
+              <Route path="standards" element={<AdminStandardsPage />} />
             </Route>
           </Route>
         </Route>

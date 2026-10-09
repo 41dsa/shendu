@@ -2,7 +2,7 @@ import csv
 import io
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
@@ -23,7 +23,9 @@ from app.models.entities import (
 )
 from app.domain.essay import USER_ESSAY_QUESTION_ID
 from app.schemas.admin_research import AdminQuestionUpsert, GoldSampleCreate, PromptVersionCreate
+from app.services.gold_ai_service import seed_ai_gold_for_question_sync
 from app.services.gold_service import regression_summary, run_gold_sample_sync
+from app.services.mstd_e_ai_eval import evaluate_mstd_e_ai_milestone
 from app.services.events_service import track_event
 
 router = APIRouter(prefix="/admin", tags=["admin-research"])
@@ -184,6 +186,28 @@ def list_gold(_: User = Depends(require_admin), db: Session = Depends(get_db)) -
     ]
 
 
+@router.get("/mstd-e-ai-milestone")
+def mstd_e_ai_milestone(_: User = Depends(require_admin), db: Session = Depends(get_db)) -> dict:
+    """纯 AI 验收里程碑（DEC-06～08）。"""
+    return evaluate_mstd_e_ai_milestone(db)
+
+
+@router.post("/gold-samples/seed-ai")
+def seed_ai_gold(
+    question_id: str = Query(...),
+    mode: str = Query("auto", pattern="^(auto|stub|llm)$"),
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> dict:
+    if not db.get(Question, question_id):
+        raise HTTPException(status_code=404, detail="题目不存在")
+    try:
+        rows = seed_ai_gold_for_question_sync(db, question_id, admin_user_id=admin.id, mode=mode)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"question_id": question_id, "count": len(rows), "ids": [r.id for r in rows]}
+
+
 @router.post("/gold-samples")
 def create_gold(
     body: GoldSampleCreate,
@@ -225,6 +249,7 @@ def run_gold(
         "run_id": run.id,
         "ai_score": run.ai_score,
         "score_delta": run.score_delta,
+        "standard_version": run.standard_version,
         "report_id": run.report_id,
     }
 
@@ -244,6 +269,7 @@ def gold_regression(_: User = Depends(require_admin), db: Session = Depends(get_
             "gold_sample_id": r.gold_sample_id,
             "ai_score": r.ai_score,
             "score_delta": r.score_delta,
+            "standard_version": r.standard_version,
             "created_at": r.created_at.isoformat(),
         }
         for r in recent

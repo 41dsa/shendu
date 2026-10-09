@@ -7,7 +7,20 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.database import Base, engine
 from app.middleware.access_log import SafeAccessLogMiddleware
-from app.routers import admin, admin_research, ai_config, auth, coach, disputes, exam, grading, license, questions, submissions
+from app.routers import (
+    admin,
+    admin_research,
+    admin_standards,
+    ai_config,
+    auth,
+    coach,
+    disputes,
+    exam,
+    grading,
+    license,
+    questions,
+    submissions,
+)
 
 
 @asynccontextmanager
@@ -34,6 +47,7 @@ app.include_router(license.router)
 app.include_router(ai_config.router)
 app.include_router(admin.router)
 app.include_router(admin_research.router)
+app.include_router(admin_standards.router)
 app.include_router(disputes.router)
 app.include_router(exam.router)
 app.include_router(questions.router)

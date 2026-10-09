@@ -5,3 +5,4 @@ __pycache__
 node_modules
 dist
 .DS_Store
+services/api/mstd_e_ai_report.md

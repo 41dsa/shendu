@@ -23,6 +23,15 @@ class Settings(BaseSettings):
     bootstrap_admin_email: str | None = None
     afdian_plan_url: str = "https://afdian.net"
     max_concurrent_grading_jobs_per_user: int = 2
+    standards_upload_dir: str = "uploads/standards"
+    standard_publish_min_confidence: float = 0.85
+    standards_annotation_dir: str = ""
+
+    @property
+    def standards_annotation_path(self) -> Path:
+        if self.standards_annotation_dir.strip():
+            return Path(self.standards_annotation_dir)
+        return _API_ROOT.parent.parent / "data" / "standards" / "annotation"
 
     @property
     def cors_origin_list(self) -> list[str]:

@@ -51,7 +51,10 @@ export function showApiError(error: unknown, fallback = "操作失败"): void {
     return;
   }
   if (code === "GRADING_QUEUE_FULL") {
-    message.warning("已有批改任务进行中，请等待完成后再提交（最多 2 个并发）。");
+    message.warning(
+      "批改队列已满（最多 2 个进行中）。请打开顶部进度条等待完成；若卡住超过 5 分钟，请刷新后重试（系统会自动释放超时任务）。",
+      6,
+    );
     return;
   }
   message.error(error instanceof Error ? error.message : fallback);

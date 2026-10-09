@@ -143,3 +143,20 @@ class StandardDocumentCreateRequest(BaseModel):
     year: int | None = None
     content: str = ""
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+DocumentCategory = Literal["announcement", "syllabus", "exam_paper", "reference", "other"]
+
+
+class JobRubricDraftPatch(BaseModel):
+    """发布前编辑 Rubric（criteria / dimensions 全量替换）。"""
+
+    criteria: list[dict[str, Any]] | None = None
+    dimensions: list[dict[str, Any]] | None = None
+    total_score: int | None = None
+
+
+class ExamStandardPublishRequest(BaseModel):
+    exam: str
+    year: int
+    essay_policy: dict[str, Any] = Field(default_factory=dict)

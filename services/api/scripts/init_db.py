@@ -1,5 +1,7 @@
 """Create tables, migrate lightweight columns, seed demo 大作文 + test redeem code."""
 
+import csv
+import subprocess
 import sys
 from pathlib import Path
 
@@ -13,6 +15,11 @@ from app.domain.essay import DEFAULT_RUBRIC_DIMENSIONS, USER_ESSAY_QUESTION_ID
 from app.models.entities import PromptPurpose, PromptVersion, Question, QuestionType, RedeemCode, RedeemCodeStatus
 from app.services.grading_service import SYSTEM_PROMPT
 from app.services.standard_engine.prompt_defaults import STANDARD_PROMPT_BODIES, STANDARD_PROMPT_NAMES
+from app.services.standard_engine.structure_service import upsert_question_from_row
+
+ESSAY_BATCH_CSV = (
+    Path(__file__).resolve().parents[3] / "data/standards/国考/2024/demo_essay_batch.csv"
+)
 
 DEV_TEST_CODE = "TEST-DEV-LICENSE"
 DEMO_QUESTION_ID = "demo-essay-001"
@@ -76,6 +83,24 @@ def ensure_question_columns() -> None:
             )
         )
         conn.execute(text("DELETE FROM questions WHERE title = '基层治理存在问题归纳'"))
+
+
+def ensure_user_ai_usage_columns() -> None:
+    insp = inspect(engine)
+    if "user_ai_usage" not in insp.get_table_names():
+        return
+    cols = {c["name"] for c in insp.get_columns("user_ai_usage")}
+    with engine.begin() as conn:
+        if "standard_generation_job_id" not in cols:
+            conn.execute(
+                text("ALTER TABLE user_ai_usage ADD COLUMN standard_generation_job_id VARCHAR(36)")
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_user_ai_usage_standard_generation_job_id "
+                    "ON user_ai_usage (standard_generation_job_id)"
+                )
+            )
 
 
 def ensure_gold_run_columns() -> None:
@@ -147,6 +172,14 @@ def seed_default_prompt(db) -> None:
     )
 
 
+def seed_essay_batch_csv(db) -> None:
+    if not ESSAY_BATCH_CSV.is_file():
+        return
+    with ESSAY_BATCH_CSV.open(encoding="utf-8-sig") as f:
+        for row in csv.DictReader(f):
+            upsert_question_from_row(db, row)
+
+
 def seed_standard_prompts(db) -> None:
     for purpose_key, body in STANDARD_PROMPT_BODIES.items():
         purpose = PromptPurpose(purpose_key)
@@ -162,14 +195,22 @@ def seed_standard_prompts(db) -> None:
         )
 
 
+def _seed_reference_documents() -> None:
+    ref_script = Path(__file__).resolve().parent / "seed_reference_documents.py"
+    if ref_script.is_file():
+        subprocess.run([sys.executable, str(ref_script)], check=False)
+
+
 def main() -> None:
     Base.metadata.create_all(bind=engine)
     ensure_question_columns()
     ensure_submission_columns()
     ensure_gold_run_columns()
+    ensure_user_ai_usage_columns()
     db = SessionLocal()
     try:
         upsert_demo_essay(db)
+        seed_essay_batch_csv(db)
         upsert_user_essay_placeholder(db)
         seed_default_prompt(db)
         seed_standard_prompts(db)
@@ -188,6 +229,7 @@ def main() -> None:
         )
     finally:
         db.close()
+    _seed_reference_documents()
 
 
 if __name__ == "__main__":

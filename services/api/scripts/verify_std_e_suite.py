@@ -25,6 +25,10 @@ def main() -> None:
     run("verify_standard_input_cache.py", env={"STANDARD_GEN_MODE": "stub"})
     run("verify_rubric_agreement.py")
     run("verify_ai_gold_seed.py")
+    run("verify_exam_standard.py", env={"STANDARD_GEN_MODE": "stub", "STANDARD_AUTO_PUBLISH": "0"})
+    run("verify_essay_exam_policy.py", env={"STANDARD_GEN_MODE": "stub", "STANDARD_AUTO_PUBLISH": "0"})
+    run("verify_practice_catalog.py", env={"STANDARD_GEN_MODE": "stub", "STANDARD_AUTO_PUBLISH": "0"})
+    run("verify_exam_catalog.py")
     print("\nverify_std_e_suite: all ok")
 
 

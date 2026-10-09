@@ -277,6 +277,22 @@ class ExamQuestionStandardStatus(str, enum.Enum):
     archived = "archived"
 
 
+class ExamStandardStatus(str, enum.Enum):
+    draft = "draft"
+    published = "published"
+    archived = "archived"
+
+
+class StandardDocumentCategory(str, enum.Enum):
+    """M1 资料目录（大作文 V0.3-E）。"""
+
+    announcement = "announcement"
+    syllabus = "syllabus"
+    exam_paper = "exam_paper"
+    reference = "reference"
+    other = "other"
+
+
 class PromptVersion(Base):
     """批改 Prompt 版本（BE-603）；仅一条 is_active=true 生效。"""
 
@@ -444,5 +460,24 @@ class ExamQuestionStandard(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=False)
     payload: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     validation_result: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    published_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ExamStandard(Base):
+    """考试级标准聚合（M7 简版，仅大作文）。"""
+
+    __tablename__ = "exam_standards"
+    __table_args__ = (UniqueConstraint("exam", "year", "version", name="uq_exam_standard_version"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    exam: Mapped[str] = mapped_column(String(64), index=True)
+    year: Mapped[int] = mapped_column(Integer, index=True)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    status: Mapped[ExamStandardStatus] = mapped_column(
+        Enum(ExamStandardStatus), default=ExamStandardStatus.draft
+    )
+    is_active: Mapped[bool] = mapped_column(Boolean, default=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     published_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

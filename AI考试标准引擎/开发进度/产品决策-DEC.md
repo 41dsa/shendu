@@ -13,3 +13,7 @@
 | DEC-06 | 标准质量与验收 | **纯 AI、无人工教研**：`questions_for_labeling.csv` 由 **`STANDARD_AI_ANNOTATION=1`（默认）** 在 job `validated` 后反写；STD-704 指标为 **自洽率**，非对标官方金标准。M-STD-E 采用 **M-STD-E-AI**（工程冒烟 + 自洽 + 发布数） |
 | DEC-07 | 发布 | **可选无人值守发布**：`STANDARD_AUTO_PUBLISH=1`；低于门槛时用 **`STANDARD_AUTO_PUBLISH_FORCE=1`**（等同 Admin 强制发布，无人工点击） |
 | DEC-08 | 金标回归 | **AI 生成金标**（`seed_ai_gold.py` 高/中/低 + 期望分区间）；`run_ai_gold_regression.py` 用 BYOK 跑批改回归。期望分来自 Rubric 总分档位，非人工标分 |
+| PDF-PLAN | 总规划 | 见 [PDF对齐-考试标准引擎总规划.md](../PDF对齐-考试标准引擎总规划.md) |
+| DEC-09 | 产品范围 | **仅申论大作文**；Track-B 小题冻结；V0.3-E 见 [V0.3-E-大作文路线图.md](./V0.3-E-大作文路线图.md) |
+| DEC-10 | 产品级学员端 | 题库仅 **已发布标准**；ExamProfile 推荐；批改双模式。见 [V1.0-P-产品级路线图.md](./V1.0-P-产品级路线图.md) |
+| DEC-11 | 考试目标表单 | 国考/省考下拉 + 卷种代码；API 返回 `mapped_bank_exam`；报告展示题目/考试标准版本 |

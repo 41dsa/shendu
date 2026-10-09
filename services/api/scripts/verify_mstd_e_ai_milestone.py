@@ -18,7 +18,7 @@ def main() -> None:
     print("checks:", m["checks"])
     if not m["milestone_mstd_e_ai_passed"]:
         print("verify_mstd_e_ai_milestone: FAIL")
-        print("hint: python scripts/run_pure_ai_pipeline.py --limit 21 --mode stub")
+        print("hint: python scripts/run_pure_ai_pipeline.py --limit 40 --mode stub")
         sys.exit(1)
     print("verify_mstd_e_ai_milestone: ok")
 

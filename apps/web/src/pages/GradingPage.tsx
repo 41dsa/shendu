@@ -1,19 +1,55 @@
-import { Alert, Button, Card, Col, Input, Row, Space, Typography, Upload, message } from "antd";
+import {
+  Alert,
+  Button,
+  Card,
+  Col,
+  Input,
+  Radio,
+  Row,
+  Select,
+  Space,
+  Tag,
+  Typography,
+  Upload,
+  message,
+} from "antd";
 import { InboxOutlined, UploadOutlined } from "@ant-design/icons";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import type { UploadProps } from "antd";
 import { api } from "../api/client";
-import GradingJobPanel from "../components/GradingJobPanel";
+import { showApiError } from "../api/errors";
+import GradingJobPanel, { type GradingJobSubmissionSnapshot } from "../components/GradingJobPanel";
+import GradingQueuePanel from "../components/GradingQueuePanel";
 import ActivationRequiredNotice from "../components/ActivationRequiredNotice";
 import { useEntitlement } from "../hooks/useEntitlement";
 
-const WORD_MIN = 800;
-const WORD_MAX = 1200;
 const DRAFT_KEY = "shendu_grading_draft_v1";
 
-type GradingDraft = { userPrompt: string; userMaterial: string; answer: string };
+type GradingDraft = {
+  mode: "bank" | "custom";
+  questionId: string | null;
+  userPrompt: string;
+  userMaterial: string;
+  answer: string;
+};
+
+type QuestionListItem = {
+  id: string;
+  title: string;
+  score: number;
+  word_min: number | null;
+  word_max: number | null;
+  exam: string | null;
+  year: number | null;
+  has_published_standard?: boolean;
+};
+
+type QuestionDetail = QuestionListItem & {
+  prompt: string;
+  reference_material: string | null;
+};
 
 function loadDraft(): GradingDraft | null {
   try {
@@ -37,30 +73,124 @@ async function readTextFile(file: File): Promise<string> {
 export default function GradingPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const activeJobId = searchParams.get("job");
+  const initialQuestionId = searchParams.get("question");
 
+  const qc = useQueryClient();
   const { data: ent } = useEntitlement();
   const initial = loadDraft();
+  const [mode, setMode] = useState<"bank" | "custom">(initial?.mode ?? (initialQuestionId ? "bank" : "custom"));
+  const [questionId, setQuestionId] = useState<string | null>(initial?.questionId ?? initialQuestionId);
   const [userPrompt, setUserPrompt] = useState(initial?.userPrompt ?? "");
   const [userMaterial, setUserMaterial] = useState(initial?.userMaterial ?? "");
   const [answer, setAnswer] = useState(initial?.answer ?? "");
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const restoredFormForJobRef = useRef<string | null>(null);
+
+  const { data: catalog } = useQuery({
+    queryKey: ["questions-catalog"],
+    queryFn: () => api<QuestionListItem[]>("/questions?practice_only=true&limit=100"),
+    enabled: !!ent?.licensed,
+  });
+
+  const { data: questionDetail } = useQuery({
+    queryKey: ["question-detail", questionId],
+    queryFn: () => api<QuestionDetail>(`/questions/${questionId}`),
+    enabled: mode === "bank" && !!questionId,
+  });
+
+  const { data: activeJobForRestore } = useQuery({
+    queryKey: ["grading-job", activeJobId],
+    queryFn: () => api<{ status: string; submission?: GradingJobSubmissionSnapshot | null }>(
+      `/grading-jobs/${activeJobId}`,
+    ),
+    enabled: !!activeJobId && !!ent?.licensed,
+  });
+
+  function applySubmissionToForm(snap: GradingJobSubmissionSnapshot) {
+    const content = snap.content ?? "";
+    if (snap.is_custom) {
+      setMode("custom");
+      setQuestionId(null);
+      setUserPrompt(snap.user_prompt ?? "");
+      setUserMaterial(snap.user_material ?? "");
+      setAnswer(content);
+      localStorage.setItem(
+        DRAFT_KEY,
+        JSON.stringify({
+          mode: "custom",
+          questionId: null,
+          userPrompt: snap.user_prompt ?? "",
+          userMaterial: snap.user_material ?? "",
+          answer: content,
+        } satisfies GradingDraft),
+      );
+      return;
+    }
+    setMode("bank");
+    setQuestionId(snap.question_id);
+    setAnswer(content);
+    localStorage.setItem(
+      DRAFT_KEY,
+      JSON.stringify({
+        mode: "bank",
+        questionId: snap.question_id,
+        userPrompt: "",
+        userMaterial: "",
+        answer: content,
+      } satisfies GradingDraft),
+    );
+  }
+
+  useEffect(() => {
+    if (!activeJobId) {
+      restoredFormForJobRef.current = null;
+      return;
+    }
+    if (!activeJobForRestore?.submission) return;
+    if (activeJobForRestore.status !== "failed") return;
+    if (restoredFormForJobRef.current === activeJobId) return;
+    restoredFormForJobRef.current = activeJobId;
+    applySubmissionToForm(activeJobForRestore.submission);
+    message.info("已恢复该失败任务的作答内容，可修改后重新提交");
+  }, [activeJobId, activeJobForRestore]);
+
+  useEffect(() => {
+    if (mode !== "bank" || !questionDetail) return;
+    setUserPrompt(questionDetail.prompt);
+    setUserMaterial(questionDetail.reference_material ?? "");
+  }, [mode, questionDetail]);
 
   useEffect(() => {
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
-      const draft: GradingDraft = { userPrompt, userMaterial, answer };
+      const draft: GradingDraft = { mode, questionId, userPrompt, userMaterial, answer };
       localStorage.setItem(DRAFT_KEY, JSON.stringify(draft));
     }, 800);
     return () => {
       if (saveTimer.current) clearTimeout(saveTimer.current);
     };
-  }, [userPrompt, userMaterial, answer]);
+  }, [mode, questionId, userPrompt, userMaterial, answer]);
+
+  const wordMin = mode === "bank" && questionDetail?.word_min ? questionDetail.word_min : 800;
+  const wordMax = mode === "bank" && questionDetail?.word_max ? questionDetail.word_max : 1200;
 
   const submit = useMutation({
     mutationFn: async () => {
+      if (!answer.trim()) throw new Error("请填写或上传你的作文正文");
+      if (mode === "bank") {
+        if (!questionId) throw new Error("请选择题库题目");
+        const sub = await api<{ id: string }>("/submissions", {
+          method: "POST",
+          body: JSON.stringify({
+            question_id: questionId,
+            content: answer,
+            status: "draft",
+          }),
+        });
+        return api<{ grading_job_id: string }>(`/submissions/${sub.id}/grade`, { method: "POST" });
+      }
       const prompt = userPrompt.trim();
       if (!prompt) throw new Error("请填写题干与作答要求");
-      if (!answer.trim()) throw new Error("请填写或上传你的作文正文");
       const sub = await api<{ id: string }>("/submissions", {
         method: "POST",
         body: JSON.stringify({
@@ -75,8 +205,10 @@ export default function GradingPage() {
     onSuccess: (res) => {
       message.success("已提交大作文批改，请在本页顶部查看进度");
       localStorage.removeItem(DRAFT_KEY);
+      qc.invalidateQueries({ queryKey: ["grading-queue"] });
       setSearchParams({ job: res.grading_job_id });
     },
+    onError: (e) => showApiError(e, "提交批改失败"),
   });
 
   const clearJob = () => setSearchParams({});
@@ -118,6 +250,14 @@ export default function GradingPage() {
     <>
       {activeJobId ? <GradingJobPanel jobId={activeJobId} onClose={clearJob} /> : null}
 
+      {ent?.licensed ? (
+        <GradingQueuePanel
+          enabled={!!ent?.licensed}
+          selectedJobId={activeJobId}
+          onSelectJob={(id) => setSearchParams({ job: id })}
+        />
+      ) : null}
+
       {!ent?.licensed ? <ActivationRequiredNotice variant="banner" feature="大作文批改" /> : null}
       {needsKey ? (
         <Alert
@@ -134,9 +274,50 @@ export default function GradingPage() {
         />
       ) : null}
 
-      <Typography.Paragraph type="secondary" style={{ marginBottom: 16 }}>
-        请粘贴或上传真实考试的<strong>给定材料</strong>、<strong>题干与作答要求</strong>，以及你的<strong>完整大作文</strong>。系统按标准大作文五维评分，不依赖内置题库。
-      </Typography.Paragraph>
+      <Card size="small" style={{ marginBottom: 16 }}>
+        <Space direction="vertical" style={{ width: "100%" }}>
+          <Radio.Group
+            value={mode}
+            onChange={(e) => {
+              setMode(e.target.value);
+              if (e.target.value === "custom") setQuestionId(null);
+            }}
+          >
+            <Radio.Button value="bank">题库选题（已发布标准）</Radio.Button>
+            <Radio.Button value="custom">自备题干与材料</Radio.Button>
+          </Radio.Group>
+          {mode === "bank" ? (
+            <Select
+              showSearch
+              style={{ width: "100%", maxWidth: 640 }}
+              placeholder="选择推荐真题 / 联调大作文"
+              value={questionId ?? undefined}
+              onChange={setQuestionId}
+              optionFilterProp="label"
+              options={(catalog ?? []).map((q) => ({
+                value: q.id,
+                label: q.title,
+              }))}
+            />
+          ) : null}
+          {mode === "bank" && questionDetail && (
+            <Space wrap size={[8, 4]}>
+              <Tag color="green">已发布考试标准</Tag>
+              <Tag>{questionDetail.score} 分</Tag>
+              <Tag>
+                {wordMin}～{wordMax} 字
+              </Tag>
+              {questionDetail.exam && <Tag>{questionDetail.exam}</Tag>}
+              {questionDetail.year && <Tag>{questionDetail.year}</Tag>}
+            </Space>
+          )}
+          {mode === "custom" ? (
+            <Typography.Text type="secondary">
+              自备题使用默认维度 Rubric；题库题使用考试标准引擎已发布标准（更稳定）。
+            </Typography.Text>
+          ) : null}
+        </Space>
+      </Card>
 
       <Row gutter={16}>
         <Col xs={24} lg={12}>
@@ -144,25 +325,39 @@ export default function GradingPage() {
             title="给定材料（可选）"
             size="small"
             extra={
-              <Upload {...materialUpload}>
-                <Button size="small" icon={<UploadOutlined />}>
-                  上传 .txt
-                </Button>
-              </Upload>
+              mode === "custom" ? (
+                <Upload {...materialUpload}>
+                  <Button size="small" icon={<UploadOutlined />}>
+                    上传 .txt
+                  </Button>
+                </Upload>
+              ) : null
             }
           >
-            <Input.TextArea
-              rows={10}
-              value={userMaterial}
-              onChange={(e) => setUserMaterial(e.target.value)}
-              placeholder="粘贴申论给定材料全文；无材料题可留空。"
-            />
-            <Upload.Dragger {...materialUpload} style={{ marginTop: 12 }}>
-              <p className="ant-upload-drag-icon">
-                <InboxOutlined />
-              </p>
-              <p className="ant-upload-text">或拖拽材料文本文件到此处</p>
-            </Upload.Dragger>
+            {mode === "bank" && !userMaterial.trim() ? (
+              <Alert
+                type="info"
+                showIcon
+                message="本题无给定材料"
+                description="联调/真题库中该题未附带背景材料；请直接按右侧题干写作。批改仍使用本题已发布的维度标准。"
+              />
+            ) : (
+              <Input.TextArea
+                rows={mode === "bank" && userMaterial.trim() ? 10 : 10}
+                value={userMaterial}
+                onChange={(e) => setUserMaterial(e.target.value)}
+                readOnly={mode === "bank"}
+                placeholder="粘贴申论给定材料全文；无材料题可留空。"
+              />
+            )}
+            {mode === "custom" && (
+              <Upload.Dragger {...materialUpload} style={{ marginTop: 12 }}>
+                <p className="ant-upload-drag-icon">
+                  <InboxOutlined />
+                </p>
+                <p className="ant-upload-text">或拖拽材料文本文件到此处</p>
+              </Upload.Dragger>
+            )}
           </Card>
         </Col>
         <Col xs={24} lg={12}>
@@ -171,7 +366,8 @@ export default function GradingPage() {
               rows={6}
               value={userPrompt}
               onChange={(e) => setUserPrompt(e.target.value)}
-              placeholder="粘贴题目要求，如：结合给定材料，围绕××主题，自拟题目写一篇文章；字数 800～1200 字…"
+              readOnly={mode === "bank"}
+              placeholder="粘贴题目要求…"
             />
           </Card>
           <Card
@@ -191,8 +387,8 @@ export default function GradingPage() {
               onChange={(e) => setAnswer(e.target.value)}
               placeholder="粘贴或输入完整大作文正文（含标题与分段）…"
             />
-            <Typography.Text type={wordCount < WORD_MIN ? "warning" : "secondary"}>
-              {wordCount} 字（一般建议 {WORD_MIN}～{WORD_MAX} 字，以题干为准）
+            <Typography.Text type={wordCount < wordMin ? "warning" : "secondary"}>
+              {wordCount} 字（建议 {wordMin}～{wordMax} 字，以题干为准）
             </Typography.Text>
             <Button
               type="primary"

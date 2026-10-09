@@ -31,6 +31,7 @@ def ingest_uploaded_file(
     source_level: SourceLevel,
     exam: str = "",
     year: int | None = None,
+    doc_category: str = "reference",
 ) -> StandardDocument:
     try:
         content, parse_quality, mime = parse_file(path)
@@ -51,6 +52,7 @@ def ingest_uploaded_file(
             "parse_quality": parse_quality,
             "original_filename": path.name,
             "file_size": path.stat().st_size,
+            "doc_category": doc_category or "reference",
         },
     )
     db.add(row)

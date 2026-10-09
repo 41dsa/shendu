@@ -23,6 +23,12 @@ class Settings(BaseSettings):
     bootstrap_admin_email: str | None = None
     afdian_plan_url: str = "https://afdian.net"
     max_concurrent_grading_jobs_per_user: int = 2
+    grading_stale_queued_minutes: int = 5
+    grading_stale_running_minutes: int = 25
+    grading_llm_timeout_seconds: float = 120.0
+    grading_llm_stuck_minutes: int = 4
+    # 双路复核：分差超过此值则丢弃复核分，仅保留完整批改主评（避免用户看到 29/34 等撕裂感）
+    grading_consensus_max_delta: float = 1.5
     standards_upload_dir: str = "uploads/standards"
     standard_publish_min_confidence: float = 0.85
     standards_annotation_dir: str = ""

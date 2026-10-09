@@ -16,6 +16,10 @@ class QuestionListItem(BaseModel):
     score: int
     word_limit: int
     word_min: int | None = None
+    word_max: int | None = None
+    exam: str | None = None
+    year: int | None = None
+    has_published_standard: bool = False
 
 
 class QuestionDetail(QuestionListItem):

@@ -41,7 +41,7 @@ jobs:
           STANDARD_AI_ANNOTATION: "1"
           STANDARD_AUTO_PUBLISH: "1"
           STANDARD_AUTO_PUBLISH_FORCE: "1"
-        run: python scripts/run_pure_ai_pipeline.py --limit 25 --mode stub
+        run: python scripts/run_pure_ai_pipeline.py --limit 40 --mode stub
 
       - name: M-STD-E-AI milestone
         run: python scripts/verify_mstd_e_ai_milestone.py

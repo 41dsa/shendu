@@ -24,5 +24,28 @@ def test_chinese_keys() -> None:
     print("ok: chinese keys normalized")
 
 
+def test_numbered_chinese_keys() -> None:
+    raw = {
+        "total_score": 27.0,
+        "scoring_points": [],
+        "issues": [],
+        "suggestions": [],
+        "1_综合评分": {"总分": "28 / 40", "总体原因": "二类文"},
+        "2_分项评分": {
+            "维度": [{"评分维度": "立意", "得分": 8, "满分": 10, "主要原因": "扣题"}],
+            "总分": 28,
+        },
+        "3_核心问题": [{"问题": "字数不足", "原文表现": "偏短", "修改方向": "补分析"}],
+        "7_修改优先级": {"如果只能改3个地方优先修改": ["补足字数", "加强论证"]},
+    }
+    out = normalize_llm_report_payload(raw)
+    assert len(out["scoring_points"]) == 1
+    assert out["scoring_points"][0]["label"] == "立意"
+    assert len(out["issues"]) == 1
+    assert len(out["suggestions"]) >= 2
+    print("ok: numbered chinese keys normalized")
+
+
 if __name__ == "__main__":
     test_chinese_keys()
+    test_numbered_chinese_keys()

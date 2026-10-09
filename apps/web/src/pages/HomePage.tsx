@@ -17,12 +17,22 @@ type ExamProfile = {
   province: string;
   year: number;
   job_category: string;
+  summary?: string | null;
+  mapped_bank_exam?: string | null;
+};
+
+type PracticeQuestion = {
+  id: string;
+  title: string;
+  exam: string | null;
+  year: number | null;
+  score: number;
 };
 
 type ScoringPoint = { label?: string; earned?: number; max?: number };
 type Issue = { tag?: string; explanation?: string };
 
-const CONF_ZH: Record<string, string> = { high: "高", medium: "中", low: "低" };
+const CONF_ZH: Record<string, string> = { high: "高", medium: "中", low: "参考" };
 
 const DEFAULT_FOCUS = [
   { tag: "W02 结构不完整", tip: "大作文建议「标题 + 开头 + 3 段分论点 + 结尾」，提交前自检分段。" },
@@ -60,6 +70,12 @@ export default function HomePage() {
         abilities?: { overall: number | null; dimensions: { name: string; score: number | null }[] };
         recent_reports?: ReportItem[];
       }>("/coach/home"),
+    enabled: licensed,
+  });
+
+  const { data: recommended } = useQuery({
+    queryKey: ["questions-recommended"],
+    queryFn: () => api<PracticeQuestion[]>("/questions/recommended?limit=6"),
     enabled: licensed,
   });
 
@@ -168,10 +184,10 @@ export default function HomePage() {
           <Card title="考试目标">
             {exam ? (
               <Space direction="vertical" size={4}>
-                <Typography.Text>
-                  {exam.exam_type} · {exam.province} · {exam.year}
-                </Typography.Text>
-                <Typography.Text type="secondary">{exam.job_category}</Typography.Text>
+                <Typography.Text>{exam.summary ?? `${exam.exam_type} · ${exam.province} · ${exam.year}`}</Typography.Text>
+                {exam.mapped_bank_exam && (
+                  <Typography.Text type="secondary">推荐卷种：{exam.mapped_bank_exam}</Typography.Text>
+                )}
                 <Button type="link" style={{ padding: 0 }}>
                   <Link to="/settings/exam">修改</Link>
                 </Button>
@@ -212,9 +228,9 @@ export default function HomePage() {
         <Col xs={24} md={8}>
           <Card title="如何开始">
             <Space direction="vertical" style={{ width: "100%" }}>
-              <Typography.Text>1. 在批改页粘贴或上传给定材料、题干要求</Typography.Text>
+              <Typography.Text>1. 批改页可选「题库选题」或「自备题干」</Typography.Text>
               <Typography.Text>2. 粘贴或上传你的大作文全文</Typography.Text>
-              <Typography.Text type="secondary">支持 .txt / .md 文本文件，无需从题库选题。</Typography.Text>
+              <Typography.Text type="secondary">题库题已绑定考试标准，批改更稳定。</Typography.Text>
               {ready ? (
                 <Button type="primary" block>
                   <Link to="/grading">去批改</Link>
@@ -226,6 +242,42 @@ export default function HomePage() {
           </Card>
         </Col>
       </Row>
+
+      {licensed && (recommended?.length ?? 0) > 0 && (
+        <Card
+          title="推荐大作文（按考试目标 · 已发布标准）"
+          extra={
+            <Button type="link">
+              <Link to="/grading">全部选题</Link>
+            </Button>
+          }
+        >
+          <List
+            size="small"
+            dataSource={recommended}
+            renderItem={(q) => (
+              <List.Item
+                actions={[
+                  <Button key="go" type="link">
+                    <Link to={`/grading?question=${q.id}`}>去批改</Link>
+                  </Button>,
+                ]}
+              >
+                <List.Item.Meta
+                  title={q.title}
+                  description={
+                    <>
+                      {q.exam && <Tag>{q.exam}</Tag>}
+                      {q.year && <Tag>{q.year}</Tag>}
+                      <Tag>{q.score} 分题</Tag>
+                    </>
+                  }
+                />
+              </List.Item>
+            )}
+          />
+        </Card>
+      )}
 
       <Row gutter={16}>
         <Col xs={24} lg={12}>

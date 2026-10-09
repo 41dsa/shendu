@@ -3,6 +3,8 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api } from "../api/client";
+import { issueAnalysisText, issueBadgeText } from "../utils/issueDisplay";
+import { issueTypeTagStyle, severityLabel, severityVisual } from "../utils/severityLabel";
 
 type RetryContext = {
   report_id: string;
@@ -75,7 +77,13 @@ export default function RetryAnswerPage() {
           locale={{ emptyText: "暂无结构化问题，请参考下方建议" }}
           renderItem={(item) => (
             <List.Item>
-              <Tag color="orange">{item.tag}</Tag> {item.explanation}
+              <>
+                <Tag style={issueTypeTagStyle}>{issueBadgeText(item)}</Tag>
+                {item.severity ? (
+                  <Tag style={severityVisual(item.severity).style}>{severityLabel(item.severity)}</Tag>
+                ) : null}{" "}
+                {issueAnalysisText(item)}
+              </>
             </List.Item>
           )}
         />

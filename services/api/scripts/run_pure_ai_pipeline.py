@@ -19,7 +19,7 @@ SCRIPTS = API_ROOT / "scripts"
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="DEC-06/07/08 纯 AI 一条龙")
-    parser.add_argument("--limit", type=int, default=21)
+    parser.add_argument("--limit", type=int, default=40)
     parser.add_argument("--admin-email", default="", help="LLM 标准/金标与回归")
     parser.add_argument("--mode", choices=("stub", "llm", "auto"), default="stub")
     parser.add_argument("--run-gold-regression", action="store_true")

@@ -116,8 +116,10 @@ async def chat_completion_json(cred: UserProviderCredential, system: str, user: 
         {"role": "user", "content": user},
     ]
 
+    timeout = httpx.Timeout(connect=15.0, read=120.0, write=30.0, pool=15.0)
+
     async def _post(payload: dict) -> httpx.Response:
-        async with httpx.AsyncClient(timeout=120.0) as client:
+        async with httpx.AsyncClient(timeout=timeout) as client:
             return await client.post(url, json=payload, headers=headers)
 
     payload_json = {

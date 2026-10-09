@@ -1,5 +1,6 @@
 """申论大作文（V1 唯一批改对象）领域常量与辅助函数。"""
 
+import re
 from typing import Any
 
 ESSAY_GENRE = "essay"
@@ -7,6 +8,7 @@ QUESTION_TYPE_LABEL = "申论大作文"
 
 # 用户自备题干/材料批改时绑定的占位题库 ID（实际文本存在 submission 字段）
 USER_ESSAY_QUESTION_ID = "sys-user-essay"
+DEMO_QUESTION_ID = "demo-essay-001"
 
 # 报告 JSON 中维度列表字段（与历史 API 兼容）
 RUBRIC_JSON_KEY = "scoring_points"
@@ -52,6 +54,36 @@ def essay_length_ratio(char_count: int, word_min: int) -> float:
 
 def issue_tag_prompt_hint() -> str:
     return "、".join(f"{t['code']} {t['label']}" for t in ESSAY_ISSUE_TAGS)
+
+
+_ISSUE_KEYWORDS: dict[str, tuple[str, ...]] = {
+    "Q21": ("立意", "偏题", "题意", "审题"),
+    "Q25": ("结构", "层次", "递进", "重复", "交叉"),
+    "Q22": ("分论点", "论点弱"),
+    "Q24": ("论证", "因果", "分析不足", "对策为主"),
+    "Q23": ("论据", "案例", "数据", "素材", "材料", "联系实际"),
+    "Q17": ("语言", "口号", "模板", "病句", "错别字"),
+    "Q20": ("字数", "篇幅", "不足", "达标"),
+}
+
+
+def resolve_issue_badge(problem: str, raw_tag: str | None = None) -> str:
+    """短标签「Q24 论证不足」；长分析应放在 explanation。"""
+    if raw_tag:
+        m = re.match(r"^(Q\d+)\s*(.*)$", raw_tag.strip(), re.I)
+        if m:
+            code = m.group(1).upper()
+            for t in ESSAY_ISSUE_TAGS:
+                if t["code"] == code:
+                    return f"{t['code']} {t['label']}"
+            rest = (m.group(2) or "").strip()
+            return f"{code} {rest}".strip()
+    text = f"{problem} {raw_tag or ''}"
+    for t in ESSAY_ISSUE_TAGS:
+        code = t["code"]
+        if any(kw in text for kw in _ISSUE_KEYWORDS.get(code, ())):
+            return f"{t['code']} {t['label']}"
+    return "作答问题"
 
 
 def label_to_ability(label: str) -> str:

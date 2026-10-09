@@ -1,7 +1,10 @@
+import asyncio
 import json
 from datetime import UTC, datetime
 from typing import Any
 
+from app.config import settings
+from app.database import SessionLocal
 from sqlalchemy.orm import Session
 
 from app.models.entities import (
@@ -24,6 +27,7 @@ from app.services.grading_helpers import (
     answer_hash,
     build_scoring_basis,
     compute_confidence,
+    confidence_user_note,
     compute_consensus_rate,
     normalize_llm_report_payload,
 )
@@ -111,19 +115,26 @@ def log_usage(
     usage: dict[str, Any] | None,
     call_type: str,
 ) -> None:
+    """记录 token 用量；单独提交，避免 schema 漂移导致整单批改无法落库。"""
     tokens_in = usage.get("prompt_tokens") if usage else None
     tokens_out = usage.get("completion_tokens") if usage else None
-    db.add(
-        UserAiUsage(
-            user_id=user_id,
-            grading_job_id=job_id,
-            model=cred.model,
-            provider_base_url=cred.base_url,
-            tokens_in=tokens_in,
-            tokens_out=tokens_out,
-            call_type=call_type,
-        )
+    row = UserAiUsage(
+        user_id=user_id,
+        grading_job_id=job_id,
+        model=cred.model,
+        provider_base_url=cred.base_url,
+        tokens_in=tokens_in,
+        tokens_out=tokens_out,
+        call_type=call_type,
     )
+    usage_db = SessionLocal()
+    try:
+        usage_db.add(row)
+        usage_db.commit()
+    except Exception:
+        usage_db.rollback()
+    finally:
+        usage_db.close()
 
 
 def short_circuit_payload(_ctx: EssayGradingContext, reason: str, word_ratio: float) -> dict[str, Any]:
@@ -221,6 +232,8 @@ async def run_grading_job(db: Session, job_id: str) -> None:
                 "focus_points": ctx.focus_points,
                 "loss_rules": ctx.loss_rules,
                 "standard_version": ctx.standard_version,
+                "exam_policy": ctx.exam_policy,
+                "exam_standard_version": ctx.exam_standard_version,
                 "max_score": ctx.score,
                 "word_min": word_min,
                 "word_max": word_max,
@@ -237,12 +250,20 @@ async def run_grading_job(db: Session, job_id: str) -> None:
         db.commit()
 
         system_prompt = get_active_grading_system_prompt(db, SYSTEM_PROMPT)
-        raw, usage = await chat_completion_json(cred, system_prompt, user_prompt)
+        try:
+            raw, usage = await asyncio.wait_for(
+                chat_completion_json(cred, system_prompt, user_prompt),
+                timeout=settings.grading_llm_timeout_seconds,
+            )
+        except TimeoutError as exc:
+            raise AiCallError(
+                "TIMEOUT",
+                f"模型调用超过 {int(settings.grading_llm_timeout_seconds)} 秒，请检查网络与 AI 设置",
+            ) from exc
         log_usage(db, job.user_id, job.id, cred, usage, "primary")
         payload = normalize_llm_report_payload(json.loads(raw))
 
         llm_score = float(payload.get("total_score", rule))
-        payload["llm_score"] = llm_score
         payload["rule_score"] = rule
 
         # 为维度条目补上 ability 字段，供 coach 能力聚合（与题库 rubric 对齐）
@@ -258,12 +279,13 @@ async def run_grading_job(db: Session, job_id: str) -> None:
 
                 point["ability"] = label_to_ability(str(ref.get("label")))
 
+        primary_llm_score = llm_score
         consensus_scores = [llm_score]
         consensus_delta: float | None = None
+        consensus_discarded = False
 
+        # 双路复核：字数达标且未开省流时必跑第二次总分检验（与主评/规则是否接近无关）
         use_consensus = not cred.save_tokens_mode and word_ratio >= 0.3
-        if use_consensus and abs(llm_score - rule) <= 1.0:
-            use_consensus = False
         if use_consensus:
             append_step(job, "review", "consensus")
             db.commit()
@@ -274,29 +296,53 @@ async def run_grading_job(db: Session, job_id: str) -> None:
                 score2 = float(json.loads(raw2).get("score", llm_score))
                 consensus_scores.append(score2)
                 consensus_delta = abs(llm_score - score2)
-                if consensus_delta > 1.0:
+                max_delta = settings.grading_consensus_max_delta
+                if consensus_delta > max_delta:
+                    consensus_discarded = True
+                    llm_score = primary_llm_score
+                elif consensus_delta > 1.0:
                     llm_score = round((llm_score + score2) / 2, 1)
             except AiCallError:
                 consensus_scores.append(llm_score)
 
         payload["max_score"] = float(ctx.score)
         payload["consensus_scores"] = consensus_scores
+        payload["primary_llm_score"] = primary_llm_score
+        if len(consensus_scores) > 1:
+            payload["consensus_review_score"] = consensus_scores[1]
+        payload["consensus_delta"] = consensus_delta
+        payload["consensus_discarded"] = consensus_discarded
+        payload["consensus_ran"] = len(consensus_scores) >= 2
         payload["consensus_rate"] = compute_consensus_rate(consensus_scores, float(ctx.score))
+        payload["llm_score"] = llm_score
         payload["total_score"] = llm_score
 
-        if not payload.get("score_range"):
-            payload["score_range"] = [
-                max(0, round(llm_score - 1, 1)),
-                min(float(ctx.score), round(llm_score + 1, 1)),
-            ]
-
-        conf = compute_confidence(llm_score, rule, float(ctx.score), consensus_delta, word_ratio)
+        conf = compute_confidence(
+            llm_score,
+            rule,
+            float(ctx.score),
+            consensus_delta,
+            word_ratio,
+            consensus_discarded=consensus_discarded,
+        )
         payload["confidence"] = conf
-        if conf == "low":
-            payload["display_mode"] = "reference_only"
-        else:
-            payload["display_mode"] = "normal"
+        payload["confidence_scope"] = "total_score"
+        payload["confidence_note"] = confidence_user_note(
+            conf,
+            word_ratio,
+            consensus_ran=payload["consensus_ran"],
+            consensus_discarded=consensus_discarded,
+        )
 
+        span = 1.0 if conf == "high" else 2.0 if conf == "medium" else 2.5
+        payload["score_range"] = [
+            max(0, round(llm_score - span, 1)),
+            min(float(ctx.score), round(llm_score + span, 1)),
+        ]
+
+        payload["display_mode"] = "normal"
+
+        grading_standard_mode = "published" if ctx.standard_version is not None else "default_rubric"
         payload["essay_meta"] = {
             "word_min": word_min,
             "word_max": word_max,
@@ -304,9 +350,13 @@ async def run_grading_job(db: Session, job_id: str) -> None:
             "prompt_excerpt": essay_prompt[:200],
             "has_user_material": bool(ctx.reference_material),
             "standard_version": ctx.standard_version,
+            "exam_standard_version": ctx.exam_standard_version,
+            "grading_standard_mode": grading_standard_mode,
         }
         if ctx.standard_version is not None:
             payload["standard_version"] = ctx.standard_version
+        if ctx.exam_standard_version is not None:
+            payload["exam_standard_version"] = ctx.exam_standard_version
         payload["scoring_basis"] = build_scoring_basis(
             payload,
             {
@@ -342,8 +392,9 @@ async def run_grading_job(db: Session, job_id: str) -> None:
         db.commit()
     except AiCallError as exc:
         job.status = GradingJobStatus.failed
-        job.error_message = exc.code + ": " + str(exc)
+        job.error_message = f"{exc.code}: {exc}"
         job.finished_at = datetime.now(UTC)
+        append_step(job, "llm_score", f"failed:{exc.code}")
         db.commit()
     except json.JSONDecodeError:
         job.status = GradingJobStatus.failed

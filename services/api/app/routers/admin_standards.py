@@ -21,10 +21,20 @@ from app.models.entities import (
     User,
 )
 from app.schemas.standard_engine import (
+    ExamStandardPublishRequest,
+    JobRubricDraftPatch,
     LinkDocumentsRequest,
     StandardDocumentCreateRequest,
     StandardJobCreateRequest,
 )
+from app.services.standard_engine.draft_edit_service import patch_job_rubric_draft
+from app.services.standard_engine.exam_standard_service import (
+    get_active_exam_standard,
+    list_exam_standards,
+    publish_complete_exam_bundles,
+    publish_exam_standard,
+)
+from app.services.standard_engine.structure_service import get_linked_document_ids
 from app.services.standard_engine.ingest_service import ingest_uploaded_file, save_upload_bytes
 from app.services.standard_engine.metrics_eval import evaluate_annotation_csv
 from app.services.standard_engine.publish_service import PublishBlockedError, publish_standard_from_job, rollback_standard_version
@@ -89,13 +99,14 @@ def create_document(
     _: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ) -> dict:
+    meta = dict(body.metadata or {})
     row = StandardDocument(
         title=body.title,
         source_level=SourceLevel(body.source_level),
         exam=body.exam,
         year=body.year,
         content=body.content,
-        metadata_json=body.metadata,
+        metadata_json=meta,
     )
     db.add(row)
     db.commit()
@@ -110,6 +121,7 @@ async def upload_document(
     source_level: str = Form("B"),
     exam: str = Form(""),
     year: int | None = Form(None),
+    doc_category: str = Form("reference"),
     _: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ) -> dict:
@@ -127,6 +139,7 @@ async def upload_document(
         source_level=SourceLevel(source_level),
         exam=exam,
         year=year,
+        doc_category=doc_category,
     )
     meta = row.metadata_json or {}
     return {
@@ -149,6 +162,7 @@ def list_documents(_: User = Depends(require_admin), db: Session = Depends(get_d
             "source_level": r.source_level.value,
             "exam": r.exam,
             "year": r.year,
+            "doc_category": (r.metadata_json or {}).get("doc_category"),
             "created_at": r.created_at.isoformat() if r.created_at else None,
         }
         for r in rows
@@ -161,12 +175,16 @@ def create_standard_job(
     admin: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ) -> dict:
-    if not db.get(Question, body.question_id):
+    question = db.get(Question, body.question_id)
+    if not question:
         raise HTTPException(status_code=404, detail="题目不存在")
+    document_ids = list(body.document_ids or [])
+    if not document_ids:
+        document_ids = get_linked_document_ids(question)
     job = StandardGenerationJob(
         question_id=body.question_id,
         created_by_user_id=admin.id,
-        document_ids=body.document_ids,
+        document_ids=document_ids,
         status=StandardGenerationJobStatus.pending,
     )
     db.add(job)
@@ -309,6 +327,96 @@ def list_standard_versions(
         }
         for r in rows
     ]
+
+
+@router.patch("/jobs/{job_id}/rubric-draft")
+def patch_rubric_draft(
+    job_id: str,
+    body: JobRubricDraftPatch,
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> dict:
+    patch = body.model_dump(exclude_none=True)
+    if not patch:
+        raise HTTPException(status_code=400, detail="无修改内容")
+    try:
+        return patch_job_rubric_draft(db, job_id, patch)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/exam-standards")
+def list_exam_standard_rows(_: User = Depends(require_admin), db: Session = Depends(get_db)) -> list[dict]:
+    rows = list_exam_standards(db)
+    return [
+        {
+            "id": r.id,
+            "exam": r.exam,
+            "year": r.year,
+            "version": r.version,
+            "status": r.status.value,
+            "is_active": r.is_active,
+            "question_count": (r.payload or {}).get("question_count"),
+            "published_at": r.published_at.isoformat() if r.published_at else None,
+        }
+        for r in rows
+    ]
+
+
+@router.get("/exam-standards/active")
+def get_active_exam_standard_row(
+    exam: str = Query(...),
+    year: int = Query(...),
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> dict:
+    row = get_active_exam_standard(db, exam, year)
+    if not row:
+        raise HTTPException(status_code=404, detail="无生效考试级标准")
+    return {
+        "id": row.id,
+        "exam": row.exam,
+        "year": row.year,
+        "version": row.version,
+        "payload": row.payload,
+        "published_at": row.published_at.isoformat() if row.published_at else None,
+    }
+
+
+@router.post("/exam-standards/publish-all")
+def publish_all_exam_bundles(_: User = Depends(require_admin), db: Session = Depends(get_db)) -> dict:
+    rows = publish_complete_exam_bundles(db)
+    return {
+        "count": len(rows),
+        "bundles": [
+            {"exam": r.exam, "year": r.year, "version": r.version, "question_count": (r.payload or {}).get("question_count")}
+            for r in rows
+        ],
+    }
+
+
+@router.post("/exam-standards/publish")
+def publish_exam_standard_bundle(
+    body: ExamStandardPublishRequest,
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> dict:
+    try:
+        row = publish_exam_standard(
+            db,
+            exam=body.exam,
+            year=body.year,
+            essay_policy=body.essay_policy or None,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {
+        "id": row.id,
+        "exam": row.exam,
+        "year": row.year,
+        "version": row.version,
+        "question_count": (row.payload or {}).get("question_count"),
+    }
 
 
 @router.post("/jobs/{job_id}/publish")

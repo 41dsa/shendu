@@ -19,6 +19,7 @@ from app.domain.essay import USER_ESSAY_QUESTION_ID
 from app.schemas.submission import SubmissionResponse, SubmissionUpsert, SubmitGradingResponse
 from app.services.ai_client import get_credential
 from app.services.grading_limits import assert_grading_slot_available
+from app.services.standard_engine.standard_store import get_active_standard_row
 from app.services.events_service import track_event
 from app.worker.tasks import enqueue_grading_job
 
@@ -35,8 +36,13 @@ def upsert_submission(
     status = SubmissionStatus.draft if body.status == "draft" else SubmissionStatus.submitted
 
     if body.question_id:
-        if not db.get(Question, body.question_id):
+        if body.question_id == USER_ESSAY_QUESTION_ID:
+            raise HTTPException(status_code=400, detail="请使用自备题模式")
+        q = db.get(Question, body.question_id)
+        if not q or not q.published:
             raise HTTPException(status_code=404, detail="题目不存在")
+        if not get_active_standard_row(db, body.question_id):
+            raise HTTPException(status_code=503, detail="该题批改标准尚未就绪")
         row = (
             db.query(Submission)
             .filter(

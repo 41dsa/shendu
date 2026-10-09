@@ -3,7 +3,10 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api } from "../api/client";
+import ReportScoringBasis from "../components/ReportScoringBasis";
 import { normalizeReportPayload } from "../utils/reportPayload";
+import { issueAnalysisText, issueBadgeText } from "../utils/issueDisplay";
+import { issueTypeTagStyle, severityLabel, severityVisual } from "../utils/severityLabel";
 
 type ScoringPoint = {
   id?: string;
@@ -38,7 +41,13 @@ const HIT_LABEL: Record<string, string> = {
 const CONF_LABEL: Record<string, string> = {
   high: "高",
   medium: "中",
-  low: "低",
+  low: "参考",
+};
+
+const CONF_TAG_COLOR: Record<string, string> = {
+  high: "green",
+  medium: "blue",
+  low: "gold",
 };
 
 export default function ReportPage() {
@@ -72,8 +81,33 @@ export default function ReportPage() {
   });
 
   const p = normalizeReportPayload((data?.payload ?? {}) as Record<string, unknown>);
+  const essayMeta = (p.essay_meta ?? {}) as Record<string, unknown>;
+  const standardVersion =
+    (p.standard_version as number | undefined) ??
+    (essayMeta.standard_version as number | undefined) ??
+    (basisData?.basis?.standard_version as number | undefined);
+  const examStandardVersion =
+    (p.exam_standard_version as number | undefined) ??
+    (essayMeta.exam_standard_version as number | undefined) ??
+    (basisData?.basis?.exam_standard_version as number | undefined);
+  const gradingMode =
+    (essayMeta.grading_standard_mode as string | undefined) ??
+    (basisData?.basis?.grading_standard_mode as string | undefined);
   const confidence = String(p.confidence ?? "medium");
-  const displayMode = p.display_mode === "reference_only";
+  const shortCircuit = Boolean(p.short_circuit_reason);
+  const displayReferenceOnly = p.display_mode === "reference_only" && shortCircuit;
+  const lowScoreConfidence = confidence === "low";
+  const confidenceNote =
+    (p.confidence_note as string | undefined) ||
+    (confidence === "low"
+      ? "作文字数明显不足，总分仅供参考；仍可根据维度与建议改进写法。"
+      : confidence === "medium"
+        ? "总分建议在合理区间内理解；各维度得分与问题、建议可直接用于修改。"
+        : "");
+  const consensusDiscarded = Boolean(p.consensus_discarded);
+  const consensusRan =
+    Boolean(p.consensus_ran) ||
+    (Array.isArray(p.consensus_scores) && (p.consensus_scores as unknown[]).length >= 2);
   const maxScore = Number(p.max_score ?? 40);
   const range = (p.score_range as number[]) ?? [];
   const comparison = p.comparison as
@@ -96,6 +130,12 @@ export default function ReportPage() {
     new: "新出现",
   };
 
+  const scoringBasis = (basisData?.basis ?? p.scoring_basis ?? {}) as Record<string, unknown>;
+  const reviewNotes =
+    (scoringBasis.steps_summary as string | undefined) ||
+    (p.review_notes as string | undefined) ||
+    undefined;
+
   return (
     <Card
       title="批改报告"
@@ -108,29 +148,46 @@ export default function ReportPage() {
         </Space>
       }
     >
-      {displayMode && (
+      {displayReferenceOnly && (
         <Alert
           type="warning"
           showIcon
           message="评分仅供参考"
-          description={String(p.short_circuit_reason ?? "置信度较低，建议完善作答后重新提交。")}
+          description={String(p.short_circuit_reason)}
           style={{ marginBottom: 16 }}
         />
       )}
+      {!displayReferenceOnly && confidenceNote ? (
+        <Alert
+          type={lowScoreConfidence ? "warning" : "info"}
+          showIcon
+          message={lowScoreConfidence ? "总分为参考" : "总分数置信度说明"}
+          description={confidenceNote}
+          style={{ marginBottom: 16 }}
+        />
+      ) : null}
 
       <Space wrap align="center">
         <Typography.Title level={2} style={{ margin: 0 }}>
-          {displayMode ? "—" : String(p.total_score ?? "-")} / {maxScore}
+          {displayReferenceOnly ? "—" : String(p.total_score ?? "-")} / {maxScore}
         </Typography.Title>
         {range.length === 2 && (
           <Tag>合理区间 {range[0]}～{range[1]} 分</Tag>
         )}
-        <Tag color={confidence === "high" ? "green" : confidence === "low" ? "red" : "blue"}>
-          置信度 {CONF_LABEL[confidence] ?? confidence}
+        <Tag color={CONF_TAG_COLOR[confidence] ?? "blue"}>
+          总分数置信度 {CONF_LABEL[confidence] ?? confidence}
         </Tag>
-        <Tag>共识一致率 {String(p.consensus_rate ?? "-")}%</Tag>
+        {consensusRan ? (
+          <Tag color={consensusDiscarded ? "default" : "cyan"}>
+            {consensusDiscarded ? "双路已检验·采用主评" : "双路已检验"}
+          </Tag>
+        ) : null}
         {p.from_cache ? <Tag>缓存命中</Tag> : null}
         {p.attempt ? <Tag>第 {String(p.attempt)} 稿</Tag> : null}
+        {standardVersion != null ? <Tag color="purple">题目标准 v{standardVersion}</Tag> : null}
+        {examStandardVersion != null ? <Tag color="geekblue">考试标准 v{examStandardVersion}</Tag> : null}
+        {gradingMode === "default_rubric" ? <Tag>默认 Rubric</Tag> : null}
+        {gradingMode === "published" ? <Tag color="green">已发布标准</Tag> : null}
       </Space>
 
       {comparison && (
@@ -174,9 +231,18 @@ export default function ReportPage() {
               key: "basis",
               label: "查看评分依据",
               children: (
-                <pre style={{ margin: 0, whiteSpace: "pre-wrap", fontSize: 12 }}>
-                  {JSON.stringify(basisData?.basis ?? p.scoring_basis ?? {}, null, 2)}
-                </pre>
+                <ReportScoringBasis
+                  basis={scoringBasis}
+                  totalScore={displayReferenceOnly ? "—" : String(p.total_score ?? "-")}
+                  consensusDiscarded={consensusDiscarded || Boolean(scoringBasis.consensus_discarded)}
+                  maxScore={maxScore}
+                  confidence={confidence}
+                  fromCache={Boolean(p.from_cache)}
+                  reviewNotes={reviewNotes}
+                  standardVersion={standardVersion ?? null}
+                  examStandardVersion={examStandardVersion ?? null}
+                  gradingMode={gradingMode}
+                />
               ),
             },
           ]}
@@ -223,20 +289,24 @@ export default function ReportPage() {
           <List
             dataSource={(p.issues as Issue[]) ?? []}
             locale={{ emptyText: "暂无结构化问题标签" }}
-            renderItem={(item) => (
-              <List.Item>
-                <Space direction="vertical" size={4}>
-                  <Space>
-                    <Tag color="orange">{item.tag}</Tag>
-                    {item.severity && <Tag>{item.severity}</Tag>}
+            renderItem={(item) => {
+              const analysis = issueAnalysisText(item);
+              const sev = severityVisual(item.severity);
+              return (
+                <List.Item>
+                  <Space direction="vertical" size={8} style={{ width: "100%" }}>
+                    <Space wrap align="center">
+                      <Tag style={issueTypeTagStyle}>{issueBadgeText(item)}</Tag>
+                      {item.severity ? <Tag style={sev.style}>{severityLabel(item.severity)}</Tag> : null}
+                    </Space>
+                    <Typography.Paragraph style={{ marginBottom: 0 }}>{analysis}</Typography.Paragraph>
+                    {item.user_quote ? (
+                      <Typography.Text type="secondary">你的表述：「{item.user_quote}」</Typography.Text>
+                    ) : null}
                   </Space>
-                  <Typography.Paragraph style={{ marginBottom: 0 }}>{item.explanation}</Typography.Paragraph>
-                  {item.user_quote && (
-                    <Typography.Text type="secondary">你的表述：「{item.user_quote}」</Typography.Text>
-                  )}
-                </Space>
-              </List.Item>
-            )}
+                </List.Item>
+              );
+            }}
           />
           <Typography.Title level={5} style={{ marginTop: 16 }}>
             AI 建议

@@ -16,7 +16,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app.database import SessionLocal
 from app.models.entities import StandardGenerationJob, StandardGenerationJobStatus, User, UserRole
 from app.services.standard_engine.bank_questions import bank_essay_questions
+from app.services.standard_engine.exam_standard_service import publish_complete_exam_bundles
 from app.services.standard_engine.pipeline import run_standard_generation_job
+from app.services.standard_engine.structure_service import get_linked_document_ids
 
 API_ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = API_ROOT / "scripts"
@@ -50,6 +52,7 @@ def main() -> None:
             job = StandardGenerationJob(
                 question_id=q.id,
                 created_by_user_id=admin_id,
+                document_ids=get_linked_document_ids(q),
                 status=StandardGenerationJobStatus.pending,
             )
             db.add(job)
@@ -91,6 +94,14 @@ def main() -> None:
         cwd=API_ROOT,
         check=False,
     )
+    db2 = SessionLocal()
+    try:
+        bundles = publish_complete_exam_bundles(db2)
+        if bundles:
+            print(f"exam_bundles_published: {len(bundles)}")
+    finally:
+        db2.close()
+
     report = args.report or API_ROOT / "mstd_e_ai_report.md"
     subprocess.run([sys.executable, str(SCRIPTS / "mstd_e_ai_report.py"), str(report)], cwd=API_ROOT, check=True)
 

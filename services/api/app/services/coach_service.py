@@ -163,8 +163,8 @@ def compute_abilities(db: Session, user_id: str, limit: int = 20) -> dict[str, A
     }
 
 
-def aggregate_issue_book(db: Session, user_id: str, limit: int = 50) -> list[dict[str, Any]]:
-    """问题本（BE-504）：按标签聚合出现次数与最近严重程度。"""
+def aggregate_issue_book(db: Session, user_id: str, limit: int = 80) -> list[dict[str, Any]]:
+    """问题本（BE-504）：按标签聚合出现次数、严重程度与关联报告列表。"""
     reports = (
         db.query(Report)
         .filter(Report.user_id == user_id)
@@ -174,7 +174,8 @@ def aggregate_issue_book(db: Session, user_id: str, limit: int = 50) -> list[dic
     )
     stats: dict[str, dict[str, Any]] = {}
     for rep in reports:
-        for item in (rep.payload or {}).get("issues") or []:
+        payload = rep.payload or {}
+        for item in payload.get("issues") or []:
             key = _normalize_issue_tag(item.get("tag"))
             if not key:
                 continue
@@ -186,11 +187,20 @@ def aggregate_issue_book(db: Session, user_id: str, limit: int = 50) -> list[dic
                     "count": 0,
                     "last_severity": None,
                     "last_report_id": rep.id,
+                    "reports": [],
                 },
             )
             row["count"] += 1
             row["last_severity"] = item.get("severity") or row["last_severity"]
             row["label"] = item.get("tag") or row["label"]
+            row["reports"].append(
+                {
+                    "report_id": rep.id,
+                    "created_at": rep.created_at.isoformat() if rep.created_at else "",
+                    "total_score": payload.get("total_score"),
+                    "severity": item.get("severity"),
+                }
+            )
 
     ordered = sorted(stats.values(), key=lambda x: x["count"], reverse=True)
     return ordered

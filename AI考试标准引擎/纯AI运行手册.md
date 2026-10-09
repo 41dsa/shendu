@@ -10,7 +10,7 @@ source .venv/bin/activate
 python scripts/init_db.py
 alembic stamp head   # 首次
 
-python scripts/run_pure_ai_pipeline.py --limit 21 --mode stub
+python scripts/run_pure_ai_pipeline.py --limit 40 --mode stub
 ```
 
 产出：`mstd_e_ai_report.md`（含 M-STD-E-AI 判定）、题库 published standard、AI 金标、自洽标注 CSV。
@@ -48,7 +48,7 @@ python scripts/run_pure_ai_pipeline.py \
 ## 验收
 
 ```bash
-python scripts/run_pure_ai_pipeline.py --limit 21 --mode stub
+python scripts/run_pure_ai_pipeline.py --limit 40 --mode stub
 python scripts/verify_mstd_e_ai_milestone.py   # 里程碑（pipeline 之后）
 python scripts/verify_std_e_suite.py             # 工程冒烟
 ```

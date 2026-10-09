@@ -5,6 +5,8 @@ import {
   Collapse,
   Descriptions,
   Form,
+  Input,
+  InputNumber,
   List,
   Modal,
   Popconfirm,
@@ -27,7 +29,19 @@ type DocRow = {
   source_level: string;
   exam: string;
   year: number | null;
+  doc_category?: string | null;
   created_at: string | null;
+};
+
+type ExamStandardRow = {
+  id: string;
+  exam: string;
+  year: number;
+  version: number;
+  status: string;
+  is_active: boolean;
+  question_count?: number;
+  published_at: string | null;
 };
 
 type JobRow = {
@@ -67,6 +81,8 @@ type AnnotationMetrics = {
 type MstdEaiMilestone = {
   essay_questions_published: number;
   published_standard_questions: number;
+  bank_active_standard_count?: number;
+  bank_active_standard_coverage?: number;
   ai_gold_samples: number;
   milestone_mstd_e_ai_passed: boolean;
   checks: Record<string, boolean>;
@@ -93,6 +109,8 @@ export default function AdminStandardsPage() {
   const qc = useQueryClient();
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
   const [manageQuestionId, setManageQuestionId] = useState<string | null>(null);
+  const [uploadDocCategory, setUploadDocCategory] = useState("reference");
+  const [draftCriteria, setDraftCriteria] = useState<RubricCriterion[] | null>(null);
 
   const { data: docs } = useQuery({
     queryKey: ["admin-standards-docs"],
@@ -134,6 +152,11 @@ export default function AdminStandardsPage() {
     queryFn: () => api<MstdEaiMilestone>("/admin/mstd-e-ai-milestone"),
   });
 
+  const { data: examStandards, refetch: refetchExamStandards } = useQuery({
+    queryKey: ["admin-exam-standards"],
+    queryFn: () => api<ExamStandardRow[]>("/admin/standards/exam-standards"),
+  });
+
   const { data: versions, refetch: refetchVersions } = useQuery({
     queryKey: ["admin-standards-versions", manageQuestionId],
     queryFn: () => api<VersionRow[]>(`/admin/standards/questions/${manageQuestionId}/versions`),
@@ -146,6 +169,7 @@ export default function AdminStandardsPage() {
       fd.append("file", file);
       fd.append("title", file.name);
       fd.append("source_level", "B");
+      fd.append("doc_category", uploadDocCategory);
       return apiUpload<{ id: string; parse_quality?: string }>("/admin/standards/documents/upload", fd);
     },
     onSuccess: () => {
@@ -187,6 +211,69 @@ export default function AdminStandardsPage() {
     onError: showApiError,
   });
 
+  const importCsvMut = useMutation({
+    mutationFn: async (file: File) => {
+      const fd = new FormData();
+      fd.append("file", file);
+      return apiUpload<{ count: number }>("/admin/standards/questions/import-csv", fd);
+    },
+    onSuccess: (res) => {
+      message.success(`已导入 ${res.count} 道大作文`);
+      qc.invalidateQueries({ queryKey: ["admin-questions"] });
+    },
+    onError: showApiError,
+  });
+
+  const linkDocsMut = useMutation({
+    mutationFn: (v: { question_id: string; document_ids: string[] }) =>
+      api(`/admin/standards/questions/${v.question_id}/link-documents`, {
+        method: "POST",
+        body: JSON.stringify({ document_ids: v.document_ids }),
+      }),
+    onSuccess: () => message.success("资料已关联到题目"),
+    onError: showApiError,
+  });
+
+  const publishAllExamMut = useMutation({
+    mutationFn: () =>
+      api<{ count: number }>("/admin/standards/exam-standards/publish-all", {
+        method: "POST",
+        body: "{}",
+      }),
+    onSuccess: (res) => {
+      message.success(`已发布 ${res.count} 个考试级标准包`);
+      refetchExamStandards();
+    },
+    onError: showApiError,
+  });
+
+  const publishExamMut = useMutation({
+    mutationFn: (v: { exam: string; year: number }) =>
+      api("/admin/standards/exam-standards/publish", {
+        method: "POST",
+        body: JSON.stringify(v),
+      }),
+    onSuccess: () => {
+      message.success("考试级标准已发布");
+      refetchExamStandards();
+    },
+    onError: showApiError,
+  });
+
+  const patchRubricMut = useMutation({
+    mutationFn: (v: { jobId: string; criteria: RubricCriterion[] }) =>
+      api(`/admin/standards/jobs/${v.jobId}/rubric-draft`, {
+        method: "PATCH",
+        body: JSON.stringify({ criteria: v.criteria }),
+      }),
+    onSuccess: () => {
+      message.success("Rubric 草稿已保存并重新验证");
+      if (selectedJobId) qc.invalidateQueries({ queryKey: ["admin-standards-job", selectedJobId] });
+      refetchJobs();
+    },
+    onError: showApiError,
+  });
+
   const rollbackMut = useMutation({
     mutationFn: (v: { question_id: string; version: number }) =>
       api(`/admin/standards/questions/${v.question_id}/rollback?version=${v.version}`, {
@@ -222,8 +309,10 @@ export default function AdminStandardsPage() {
     | { dimensions?: { id: string; label: string; max_score: number }[]; criteria?: RubricCriterion[] }
     | undefined;
 
+  const editableCriteria = draftCriteria ?? rubricMerged?.criteria ?? [];
+
   const rubricTableRows = useMemo(() => {
-    const criteria = rubricMerged?.criteria ?? [];
+    const criteria = editableCriteria;
     const dimMap = Object.fromEntries((rubricMerged?.dimensions ?? []).map((d) => [d.id, d.label]));
     return criteria.map((c) => ({
       key: c.id,
@@ -232,7 +321,7 @@ export default function AdminStandardsPage() {
       max_score: c.max_score,
       confidence: c.confidence,
     }));
-  }, [rubricMerged]);
+  }, [editableCriteria, rubricMerged?.dimensions]);
 
   return (
     <Space direction="vertical" size="large" style={{ width: "100%" }}>
@@ -246,7 +335,7 @@ export default function AdminStandardsPage() {
         }
         description={
           mstdEai
-            ? `已发布标准 ${mstdEai.published_standard_questions} 题 · AI 金标 ${mstdEai.ai_gold_samples} 条。CLI: run_pure_ai_pipeline.py`
+            ? `题库生效标准 ${mstdEai.bank_active_standard_count ?? "—"}/${mstdEai.essay_questions_published} · AI 金标 ${mstdEai.ai_gold_samples} 条。CLI: run_pure_ai_pipeline.py`
             : "上传资料 → 生成 → 验证 → 自动发布。详见 纯AI运行手册.md"
         }
         action={
@@ -257,6 +346,21 @@ export default function AdminStandardsPage() {
       />
 
       <Card title="资料上传（M1/M2）" size="small">
+        <Space style={{ marginBottom: 8 }}>
+          <span>资料类型</span>
+          <Select
+            style={{ width: 160 }}
+            value={uploadDocCategory}
+            onChange={setUploadDocCategory}
+            options={[
+              { value: "syllabus", label: "大纲" },
+              { value: "announcement", label: "公告" },
+              { value: "exam_paper", label: "真题卷" },
+              { value: "reference", label: "参考解析" },
+              { value: "other", label: "其他" },
+            ]}
+          />
+        </Space>
         <Upload
           maxCount={1}
           beforeUpload={(file) => {
@@ -273,11 +377,58 @@ export default function AdminStandardsPage() {
           dataSource={docs ?? []}
           renderItem={(d) => (
             <List.Item>
-              <Tag>{d.source_level}</Tag> {d.title}{" "}
+              <Tag>{d.source_level}</Tag>
+              {d.doc_category ? <Tag color="blue">{d.doc_category}</Tag> : null} {d.title}{" "}
               <TypographyMuted>{d.id.slice(0, 8)}…</TypographyMuted>
             </List.Item>
           )}
         />
+      </Card>
+
+      <Card title="题库 · CSV 导入 / 关联资料" size="small">
+        <Space wrap>
+          <Upload
+            maxCount={1}
+            accept=".csv"
+            beforeUpload={(file) => {
+              importCsvMut.mutate(file);
+              return false;
+            }}
+            showUploadList={false}
+          >
+            <Button loading={importCsvMut.isPending}>导入大作文 CSV</Button>
+          </Upload>
+          <Form
+            layout="inline"
+            onFinish={(v) =>
+              linkDocsMut.mutate({
+                question_id: v.question_id,
+                document_ids: v.document_ids ?? [],
+              })
+            }
+          >
+            <Form.Item name="question_id" rules={[{ required: true }]}>
+              <Select
+                style={{ minWidth: 280 }}
+                placeholder="选择题号"
+                options={(questions ?? []).map((q) => ({ value: q.id, label: q.title }))}
+              />
+            </Form.Item>
+            <Form.Item name="document_ids">
+              <Select
+                mode="multiple"
+                style={{ minWidth: 220 }}
+                placeholder="关联资料"
+                options={(docs ?? []).map((d) => ({ value: d.id, label: d.title }))}
+              />
+            </Form.Item>
+            <Form.Item>
+              <Button htmlType="submit" loading={linkDocsMut.isPending}>
+                保存关联
+              </Button>
+            </Form.Item>
+          </Form>
+        </Space>
       </Card>
 
       <Card title="创建标准生成任务" size="small">
@@ -383,6 +534,53 @@ export default function AdminStandardsPage() {
         )}
       </Card>
 
+      <Card title="考试级标准（M7 聚合）" size="small">
+        <Form
+          layout="inline"
+          onFinish={(v) => publishExamMut.mutate({ exam: v.exam, year: v.year })}
+        >
+          <Form.Item name="exam" rules={[{ required: true }]} initialValue="国考市地级">
+            <Input placeholder="考试名称" style={{ width: 140 }} />
+          </Form.Item>
+          <Form.Item name="year" rules={[{ required: true }]} initialValue={2024}>
+            <InputNumber min={2020} max={2030} />
+          </Form.Item>
+          <Form.Item>
+            <Button type="primary" htmlType="submit" loading={publishExamMut.isPending}>
+              发布考试级标准
+            </Button>
+          </Form.Item>
+          <Form.Item>
+            <Button onClick={() => publishAllExamMut.mutate()} loading={publishAllExamMut.isPending}>
+              批量发布（卷内题齐）
+            </Button>
+          </Form.Item>
+        </Form>
+        <Table
+          style={{ marginTop: 12 }}
+          rowKey="id"
+          size="small"
+          pagination={false}
+          dataSource={examStandards ?? []}
+          columns={[
+            { title: "考试", dataIndex: "exam" },
+            { title: "年份", dataIndex: "year", width: 72 },
+            { title: "版本", dataIndex: "version", width: 64 },
+            {
+              title: "题数",
+              dataIndex: "question_count",
+              width: 64,
+              render: (n) => n ?? "—",
+            },
+            {
+              title: "生效",
+              dataIndex: "is_active",
+              render: (a) => (a ? <Tag color="green">当前</Tag> : null),
+            },
+          ]}
+        />
+      </Card>
+
       <Card title="已发布标准 · 版本与回滚" size="small">
         <Select
           style={{ minWidth: 360, marginBottom: 12 }}
@@ -474,7 +672,10 @@ export default function AdminStandardsPage() {
 
       <Modal
         open={!!selectedJobId}
-        onCancel={() => setSelectedJobId(null)}
+        onCancel={() => {
+          setSelectedJobId(null);
+          setDraftCriteria(null);
+        }}
         width={920}
         title={`任务详情 ${selectedJobId?.slice(0, 8)}…`}
         footer={
@@ -541,18 +742,51 @@ export default function AdminStandardsPage() {
               )}
             </Descriptions>
             {rubricTableRows.length > 0 && (
-              <Table
-                size="small"
-                pagination={false}
-                title={() => "Rubric 准则预览"}
-                dataSource={rubricTableRows}
-                columns={[
-                  { title: "维度", dataIndex: "dimension", width: 120 },
-                  { title: "准则", dataIndex: "core" },
-                  { title: "满分", dataIndex: "max_score", width: 72 },
-                  { title: "置信度", dataIndex: "confidence", width: 88 },
-                ]}
-              />
+              <>
+                <Table
+                  size="small"
+                  pagination={false}
+                  title={() => "Rubric 准则（可编辑后保存草稿）"}
+                  dataSource={rubricTableRows}
+                  columns={[
+                    { title: "维度", dataIndex: "dimension", width: 120 },
+                    {
+                      title: "准则",
+                      dataIndex: "core",
+                      render: (text: string, row: { key: string }) =>
+                        jobDetail?.status === "validated" || jobDetail?.status === "failed" ? (
+                          <Input.TextArea
+                            autoSize={{ minRows: 1, maxRows: 3 }}
+                            defaultValue={text}
+                            onChange={(e) => {
+                              const next = (draftCriteria ?? rubricMerged?.criteria ?? []).map((c) =>
+                                c.id === row.key ? { ...c, core: e.target.value } : c,
+                              );
+                              setDraftCriteria(next);
+                            }}
+                          />
+                        ) : (
+                          text
+                        ),
+                    },
+                    { title: "满分", dataIndex: "max_score", width: 72 },
+                    { title: "置信度", dataIndex: "confidence", width: 88 },
+                  ]}
+                />
+                {(jobDetail?.status === "validated" || jobDetail?.status === "failed") &&
+                  draftCriteria && (
+                    <Button
+                      style={{ marginTop: 8 }}
+                      loading={patchRubricMut.isPending}
+                      onClick={() =>
+                        selectedJobId &&
+                        patchRubricMut.mutate({ jobId: selectedJobId, criteria: draftCriteria })
+                      }
+                    >
+                      保存 Rubric 草稿并重新验证
+                    </Button>
+                  )}
+              </>
             )}
             <Collapse
               items={(jobDetail.steps ?? []).map((s, i) => ({

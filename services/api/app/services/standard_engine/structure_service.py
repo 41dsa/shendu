@@ -55,7 +55,12 @@ def build_structured_essay(db: Session, question: Question) -> EssayQuestionSche
 def upsert_question_from_row(db: Session, row: dict[str, Any]) -> Question:
     """从 CSV/导入行创建或更新 Question（按 title+exam+year 匹配）。"""
     exam = str(row.get("exam") or "").strip()
-    year = row.get("year")
+    year_raw = row.get("year")
+    year: int | None
+    if year_raw is None or str(year_raw).strip() == "":
+        year = None
+    else:
+        year = int(year_raw)
     title = str(row.get("title") or "").strip()
     if not title or not str(row.get("prompt") or "").strip():
         raise ValueError("title 与 prompt 必填")

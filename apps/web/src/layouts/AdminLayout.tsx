@@ -7,9 +7,10 @@ import { api, logout } from "../api/client";
 const { Sider, Content, Header } = Layout;
 
 const adminItems = [
-  { key: "/admin/questions", label: <Link to="/admin/questions">大作文题库</Link> },
+  { key: "/admin", label: <Link to="/admin">概览</Link> },
   { key: "/admin/prompts", label: <Link to="/admin/prompts">Prompt 版本</Link> },
   { key: "/admin/gold", label: <Link to="/admin/gold">金标回归</Link> },
+  { key: "/admin/questions", label: <Link to="/admin/questions">金标参考题</Link> },
   { key: "/admin/disputes", label: <Link to="/admin/disputes">评分争议</Link> },
   { key: "/admin/jobs", label: <Link to="/admin/jobs">批改任务</Link> },
   { key: "/admin/codes", label: <Link to="/admin/codes">激活码</Link> },
@@ -20,7 +21,9 @@ export default function AdminLayout() {
   const loc = useLocation();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const selected = adminItems.find((i) => loc.pathname.startsWith(i.key))?.key ?? "/admin/questions";
+  const selected =
+    adminItems.find((i) => (i.key === "/admin" ? loc.pathname === "/admin" : loc.pathname.startsWith(i.key!)))
+      ?.key ?? "/admin";
 
   const { data: me } = useQuery({
     queryKey: ["me"],

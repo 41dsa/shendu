@@ -4,6 +4,7 @@ import RequireAuth from "./routes/RequireAuth";
 import AdminCodesPage from "./pages/AdminCodesPage";
 import AdminLayout from "./layouts/AdminLayout";
 import RequireAdmin from "./routes/RequireAdmin";
+import AdminHomePage from "./pages/admin/AdminHomePage";
 import AdminQuestionsPage from "./pages/admin/AdminQuestionsPage";
 import AdminPromptsPage from "./pages/admin/AdminPromptsPage";
 import AdminGoldPage from "./pages/admin/AdminGoldPage";
@@ -58,7 +59,7 @@ export default function App() {
           </Route>
           <Route element={<RequireAdmin />}>
             <Route path="/admin" element={<AdminLayout />}>
-              <Route index element={<Navigate to="/admin/questions" replace />} />
+              <Route index element={<AdminHomePage />} />
               <Route path="questions" element={<AdminQuestionsPage />} />
               <Route path="prompts" element={<AdminPromptsPage />} />
               <Route path="gold" element={<AdminGoldPage />} />

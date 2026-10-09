@@ -40,7 +40,7 @@ export function buildAppSidebarMenu(isAdmin: boolean): MenuItem[] {
     return learnerItems;
   }
   return [
-    { key: "/admin/questions", icon: <RollbackOutlined />, label: "教研后台" },
+    { key: "/admin", icon: <RollbackOutlined />, label: "教研后台" },
     { type: "divider" },
     { type: "group", label: "体验用户端", children: adminPreviewItems },
   ];

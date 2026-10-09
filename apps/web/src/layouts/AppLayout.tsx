@@ -22,7 +22,7 @@ export default function AppLayout() {
   const selected = (() => {
     if (location.pathname.startsWith("/grading/jobs")) return "/grading";
     if (location.pathname.startsWith("/reports/")) return "/reports";
-    if (location.pathname.startsWith("/admin")) return "/admin/questions";
+    if (location.pathname.startsWith("/admin")) return "/admin";
     const flatKeys = menuItems.flatMap((item) => {
       if (!item || typeof item !== "object") return [];
       if ("children" in item && item.children) {

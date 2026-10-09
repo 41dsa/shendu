@@ -18,6 +18,7 @@ from app.models.entities import (
 from app.domain.essay import USER_ESSAY_QUESTION_ID
 from app.schemas.submission import SubmissionResponse, SubmissionUpsert, SubmitGradingResponse
 from app.services.ai_client import get_credential
+from app.services.grading_limits import assert_grading_slot_available
 from app.services.events_service import track_event
 from app.worker.tasks import enqueue_grading_job
 
@@ -108,6 +109,8 @@ def submit_grade(
         raise HTTPException(status_code=400, detail="答案不能为空")
     if not get_credential(db, user.id, CredentialRole.primary):
         raise HTTPException(status_code=403, detail="AI_KEY_REQUIRED")
+
+    assert_grading_slot_available(db, user.id)
 
     sub.status = SubmissionStatus.submitted
     sub.submitted_at = datetime.now(UTC)

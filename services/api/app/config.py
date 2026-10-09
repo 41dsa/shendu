@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     app_env: str = "development"
     bootstrap_admin_email: str | None = None
     afdian_plan_url: str = "https://afdian.net"
+    max_concurrent_grading_jobs_per_user: int = 2
 
     @property
     def cors_origin_list(self) -> list[str]:

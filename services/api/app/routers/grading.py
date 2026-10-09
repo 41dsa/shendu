@@ -5,6 +5,7 @@ from app.database import get_db
 from app.deps import get_active_license, get_current_user
 from app.models.entities import GradingJob, License, Report, User
 from app.schemas.grading import GradingJobResponse, ReportListItem, ReportResponse
+from app.services.grading_helpers import normalize_llm_report_payload
 
 router = APIRouter(tags=["grading"])
 
@@ -68,7 +69,8 @@ def get_report(
     report = db.get(Report, report_id)
     if not report or report.user_id != user.id:
         raise HTTPException(status_code=404, detail="报告不存在")
-    return ReportResponse(id=report.id, payload=report.payload)
+    payload = normalize_llm_report_payload(dict(report.payload or {}))
+    return ReportResponse(id=report.id, payload=payload)
 
 
 @router.get("/reports/{report_id}/basis")

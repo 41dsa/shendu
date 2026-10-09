@@ -50,7 +50,6 @@ export default function GradingPage() {
       message.success("已提交大作文批改，请在本页顶部查看进度");
       setSearchParams({ job: res.grading_job_id });
     },
-    onError: (e) => message.error(String(e)),
   });
 
   const clearJob = () => setSearchParams({});

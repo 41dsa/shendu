@@ -6,7 +6,7 @@ from app.database import get_db
 from app.deps import get_current_user
 from app.models.entities import CredentialRole, User, UserProviderCredential
 from app.schemas.ai_config import AiCredentialUpsert, AiCredentialView, AiTestConnectionRequest
-from app.services.ai_client import AiCallError, get_credential, test_connection
+from app.services.ai_client import AiCallError, get_credential, normalize_base_url, test_connection
 
 router = APIRouter(prefix="/ai", tags=["ai"])
 
@@ -52,7 +52,7 @@ def upsert_credential(
     row = get_credential(db, user.id, role_enum)
     key_plain = (body.api_key or "").strip()
     if row:
-        row.base_url = body.base_url.rstrip("/")
+        row.base_url = normalize_base_url(body.base_url)
         row.model = body.model
         row.save_tokens_mode = body.save_tokens_mode
         if key_plain:
@@ -68,7 +68,7 @@ def upsert_credential(
         row = UserProviderCredential(
             user_id=user.id,
             role=role_enum,
-            base_url=body.base_url.rstrip("/"),
+            base_url=normalize_base_url(body.base_url),
             model=body.model,
             api_key_nonce=nonce,
             api_key_ciphertext=ct,

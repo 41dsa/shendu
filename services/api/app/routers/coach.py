@@ -23,6 +23,7 @@ from app.schemas.coach import (
     TrainingStartBody,
 )
 from app.services.ai_client import get_credential
+from app.services.grading_limits import assert_grading_slot_available
 from app.services.coach_service import (
     aggregate_issue_book,
     build_home_summary,
@@ -100,6 +101,8 @@ def submit_retry(
     """
     if not get_credential(db, user.id, CredentialRole.primary):
         raise HTTPException(status_code=403, detail="AI_KEY_REQUIRED")
+
+    assert_grading_slot_available(db, user.id)
 
     report = db.get(Report, report_id)
     if not report or report.user_id != user.id:

@@ -1,0 +1,68 @@
+# OPS-701 / FE-701：生产编排模板（需配置 .env 与 HTTPS 反向代理）
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: shendu
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
+      POSTGRES_DB: shendu
+    volumes:
+      - pgdata_prod:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+
+  api:
+    build:
+      context: ./services/api
+    env_file:
+      - ./services/api/.env
+    environment:
+      DATABASE_URL: postgresql+psycopg://shendu:${POSTGRES_PASSWORD:-change-me}@db:5432/shendu
+      REDIS_URL: redis://redis:6379/0
+      APP_ENV: production
+      CORS_ORIGINS: ${PUBLIC_ORIGIN:-http://localhost:8080}
+    depends_on:
+      - db
+      - redis
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: ./services/api
+    command:
+      [
+        "celery",
+        "-A",
+        "app.worker.celery_app.celery_app",
+        "worker",
+        "-Q",
+        "grading",
+        "-l",
+        "info",
+      ]
+    env_file:
+      - ./services/api/.env
+    environment:
+      DATABASE_URL: postgresql+psycopg://shendu:${POSTGRES_PASSWORD:-change-me}@db:5432/shendu
+      REDIS_URL: redis://redis:6379/0
+      APP_ENV: production
+    depends_on:
+      - api
+      - redis
+    restart: unless-stopped
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    ports:
+      - "${WEB_PORT:-8080}:80"
+    depends_on:
+      - api
+    restart: unless-stopped
+
+volumes:
+  pgdata_prod:

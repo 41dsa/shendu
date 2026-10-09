@@ -10,8 +10,15 @@ Web-only · 爱发电买断 · BYOK · **V1 专注申论大作文 AI 批改**
 
 ```bash
 cd /Users/houbx/Documents/code/shendu
-docker compose up -d
+docker compose up -d   # 本地 Postgres + Redis（可选；默认 SQLite 可不启）
 cp services/api/.env.example services/api/.env
+```
+
+生产编排模板（需自行配置密钥与域名/HTTPS）：
+
+```bash
+docker compose -f docker-compose.prod.yml up -d --build
+# 访问 http://localhost:8080 ，API 经 nginx /api 反代
 ```
 
 ### 2. 后端

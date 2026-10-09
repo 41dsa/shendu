@@ -60,6 +60,13 @@ export default function GradingJobPanel({ jobId, onClose }: Props) {
   const inProgress = data.status === "queued" || data.status === "running";
 
   if (data.status === "failed") {
+    const raw = data.error_message ?? "";
+    const subTitle =
+      raw.includes("UPSTREAM") && raw.includes("400")
+        ? "模型接口返回 400：常见原因是 Base URL 未带 /v1、模型名称错误或 Key 无权限。请到「AI 设置」核对 DeepSeek 为 https://api.deepseek.com/v1、模型 deepseek-chat，并重新「测试连接」后再批改。"
+        : raw.includes("INVALID_KEY") || raw.includes("NO_KEY")
+          ? "API Key 未配置或无效，请在「AI 设置」保存 Key 并测试连接。"
+          : raw || "请检查 API Key 与网络后重试";
     return (
       <Card
         title="大作文批改进度"
@@ -69,8 +76,18 @@ export default function GradingJobPanel({ jobId, onClose }: Props) {
         <Result
           status="error"
           title="批改失败"
-          subTitle={data.error_message ?? "请检查 API Key 与网络后重试"}
+          subTitle={subTitle}
+          extra={
+            <Button type="primary">
+              <Link to="/settings/ai">打开 AI 设置</Link>
+            </Button>
+          }
         />
+        {raw && raw !== subTitle ? (
+          <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginTop: 8 }}>
+            详情：{raw}
+          </Typography.Paragraph>
+        ) : null}
       </Card>
     );
   }

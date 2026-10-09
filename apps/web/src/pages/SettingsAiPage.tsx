@@ -34,7 +34,10 @@ export default function SettingsAiPage() {
 
   const test = useMutation({
     mutationFn: () => api("/ai/test-connection", { method: "POST", body: JSON.stringify({ role: "primary" }) }),
-    onSuccess: () => message.success("连接成功"),
+    onSuccess: (res: { warning?: string }) => {
+      if (res?.warning) message.warning(res.warning);
+      else message.success("连接成功（含 JSON 批改能力检测）");
+    },
     onError: (e) => message.error(String(e)),
   });
 
@@ -43,7 +46,7 @@ export default function SettingsAiPage() {
       <Form
         layout="vertical"
         initialValues={{
-          base_url: primary?.base_url || "https://api.deepseek.com",
+          base_url: primary?.base_url || "https://api.deepseek.com/v1",
           model: primary?.model || "deepseek-chat",
           save_tokens_mode: false,
         }}

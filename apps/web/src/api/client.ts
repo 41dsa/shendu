@@ -1,4 +1,8 @@
+import { parseApiError } from "./errors";
+
 const TOKEN_KEY = "shendu_token";
+
+export { ApiError, getApiErrorCode, showApiError } from "./errors";
 
 export function getToken(): string | null {
   return localStorage.getItem(TOKEN_KEY);
@@ -30,7 +34,8 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
     } catch {
       /* ignore */
     }
-    throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
+    const detailStr = typeof detail === "string" ? detail : JSON.stringify(detail);
+    throw parseApiError(res.status, detailStr);
   }
   if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;

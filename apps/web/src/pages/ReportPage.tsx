@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api } from "../api/client";
+import { normalizeReportPayload } from "../utils/reportPayload";
 
 type ScoringPoint = {
   id?: string;
@@ -70,10 +71,10 @@ export default function ReportPage() {
     queryFn: () => api<{ basis: Record<string, unknown> }>(`/reports/${reportId}/basis`),
   });
 
-  const p = data?.payload ?? {};
+  const p = normalizeReportPayload((data?.payload ?? {}) as Record<string, unknown>);
   const confidence = String(p.confidence ?? "medium");
   const displayMode = p.display_mode === "reference_only";
-  const maxScore = Number(p.max_score ?? 10);
+  const maxScore = Number(p.max_score ?? 40);
   const range = (p.score_range as number[]) ?? [];
   const comparison = p.comparison as
     | {

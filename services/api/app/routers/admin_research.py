@@ -21,6 +21,7 @@ from app.models.entities import (
     ScoreDispute,
     User,
 )
+from app.domain.essay import USER_ESSAY_QUESTION_ID
 from app.schemas.admin_research import AdminQuestionUpsert, GoldSampleCreate, PromptVersionCreate
 from app.services.gold_service import regression_summary, run_gold_sample_sync
 from app.services.events_service import track_event
@@ -33,7 +34,12 @@ router = APIRouter(prefix="/admin", tags=["admin-research"])
 
 @router.get("/questions")
 def admin_list_questions(_: User = Depends(require_admin), db: Session = Depends(get_db)) -> list[dict]:
-    rows = db.query(Question).order_by(Question.title).all()
+    rows = (
+        db.query(Question)
+        .filter(Question.id != USER_ESSAY_QUESTION_ID)
+        .order_by(Question.title)
+        .all()
+    )
     return [
         {
             "id": r.id,
@@ -65,7 +71,7 @@ def admin_create_question(
         word_limit=body.word_limit,
         material_structured={"genre": "essay", "word_min": body.word_min, "word_max": body.word_max},
         scoring_points=body.scoring_points,
-        published=body.published,
+        published=False,
     )
     db.add(row)
     db.commit()
@@ -84,6 +90,8 @@ def admin_update_question(
     row = db.get(Question, question_id)
     if not row:
         raise HTTPException(status_code=404, detail="题目不存在")
+    if question_id == USER_ESSAY_QUESTION_ID:
+        raise HTTPException(status_code=403, detail="系统占位题不可编辑")
     row.title = body.title
     row.prompt = body.prompt
     row.material = body.material
@@ -91,7 +99,7 @@ def admin_update_question(
     row.word_limit = body.word_limit
     row.material_structured = {"genre": "essay", "word_min": body.word_min, "word_max": body.word_max}
     row.scoring_points = body.scoring_points
-    row.published = body.published
+    row.published = False
     db.commit()
     track_event(db, "admin_question_update", admin.id, question_id=row.id)
     return {"ok": True}

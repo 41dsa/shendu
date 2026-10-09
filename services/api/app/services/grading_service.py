@@ -25,6 +25,7 @@ from app.services.grading_helpers import (
     build_scoring_basis,
     compute_confidence,
     compute_consensus_rate,
+    normalize_llm_report_payload,
 )
 
 GRADING_STEPS = [
@@ -231,7 +232,7 @@ async def run_grading_job(db: Session, job_id: str) -> None:
         system_prompt = get_active_grading_system_prompt(db, SYSTEM_PROMPT)
         raw, usage = await chat_completion_json(cred, system_prompt, user_prompt)
         log_usage(db, job.user_id, job.id, cred, usage, "primary")
-        payload = json.loads(raw)
+        payload = normalize_llm_report_payload(json.loads(raw))
 
         llm_score = float(payload.get("total_score", rule))
         payload["llm_score"] = llm_score

@@ -125,6 +125,8 @@ def submit_retry(
     row = Submission(
         user_id=user.id,
         question_id=first_sub.question_id,
+        user_prompt=first_sub.user_prompt,
+        user_material=first_sub.user_material,
         content=body.content.strip(),
         status=SubmissionStatus.submitted,
         attempt=attempt,

@@ -5,6 +5,9 @@ from typing import Any
 ESSAY_GENRE = "essay"
 QUESTION_TYPE_LABEL = "申论大作文"
 
+# 用户自备题干/材料批改时绑定的占位题库 ID（实际文本存在 submission 字段）
+USER_ESSAY_QUESTION_ID = "sys-user-essay"
+
 # 报告 JSON 中维度列表字段（与历史 API 兼容）
 RUBRIC_JSON_KEY = "scoring_points"
 

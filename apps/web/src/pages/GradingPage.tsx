@@ -1,63 +1,48 @@
-import { Alert, Button, Card, Col, Input, List, Row, Space, Tag, Typography, message } from "antd";
-import { useMutation, useQuery } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { Alert, Button, Card, Col, Input, Row, Space, Typography, Upload, message } from "antd";
+import { InboxOutlined, UploadOutlined } from "@ant-design/icons";
+import { useMutation } from "@tanstack/react-query";
+import { useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
+import type { UploadProps } from "antd";
 import { api } from "../api/client";
 import GradingJobPanel from "../components/GradingJobPanel";
 import ActivationRequiredNotice from "../components/ActivationRequiredNotice";
 import { useEntitlement } from "../hooks/useEntitlement";
 
-type Q = {
-  id: string;
-  title: string;
-  question_type: string;
-  question_type_label?: string;
-  score: number;
-  word_limit: number;
-  word_min?: number;
-};
+const WORD_MIN = 800;
+const WORD_MAX = 1200;
 
-type QDetail = Q & {
-  prompt: string;
-  reference_material?: string | null;
-  scoring_points: { id: string; label: string; max_score: number }[];
-};
+async function readTextFile(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result ?? ""));
+    reader.onerror = () => reject(new Error("无法读取文件"));
+    reader.readAsText(file, "UTF-8");
+  });
+}
 
 export default function GradingPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const activeJobId = searchParams.get("job");
 
   const { data: ent } = useEntitlement();
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [userPrompt, setUserPrompt] = useState("");
+  const [userMaterial, setUserMaterial] = useState("");
   const [answer, setAnswer] = useState("");
-
-  const { data: list } = useQuery({
-    queryKey: ["questions"],
-    queryFn: () => api<Q[]>("/questions"),
-  });
-
-  const { data: detail } = useQuery({
-    queryKey: ["question", selectedId],
-    enabled: !!selectedId,
-    queryFn: () => api<QDetail>(`/questions/${selectedId}`),
-  });
-
-  const questionFromUrl = searchParams.get("question");
-
-  useEffect(() => {
-    if (questionFromUrl && list?.some((q) => q.id === questionFromUrl)) {
-      setSelectedId(questionFromUrl);
-      return;
-    }
-    if (list?.length && !selectedId) setSelectedId(list[0].id);
-  }, [list, selectedId, questionFromUrl]);
 
   const submit = useMutation({
     mutationFn: async () => {
-      if (!selectedId) throw new Error("请选择作文题");
+      const prompt = userPrompt.trim();
+      if (!prompt) throw new Error("请填写题干与作答要求");
+      if (!answer.trim()) throw new Error("请填写或上传你的作文正文");
       const sub = await api<{ id: string }>("/submissions", {
         method: "POST",
-        body: JSON.stringify({ question_id: selectedId, content: answer, status: "draft" }),
+        body: JSON.stringify({
+          user_prompt: prompt,
+          user_material: userMaterial.trim() || null,
+          content: answer,
+          status: "draft",
+        }),
       });
       return api<{ grading_job_id: string }>(`/submissions/${sub.id}/grade`, { method: "POST" });
     },
@@ -68,15 +53,40 @@ export default function GradingPage() {
     onError: (e) => message.error(String(e)),
   });
 
-  const clearJob = () => {
-    setSearchParams({});
-  };
+  const clearJob = () => setSearchParams({});
 
   const wordCount = answer.length;
-  const wordMin = detail?.word_min ?? 800;
-  const wordMax = detail?.word_limit ?? 1200;
-
   const needsKey = ent?.licensed && !ent?.has_primary_ai_key;
+
+  const materialUpload: UploadProps = {
+    accept: ".txt,.md,.text",
+    showUploadList: false,
+    beforeUpload: async (file) => {
+      try {
+        const text = await readTextFile(file);
+        setUserMaterial((prev) => (prev ? `${prev}\n\n${text}` : text));
+        message.success(`已导入材料：${file.name}`);
+      } catch {
+        message.error("材料文件读取失败");
+      }
+      return false;
+    },
+  };
+
+  const answerUpload: UploadProps = {
+    accept: ".txt,.md,.text",
+    showUploadList: false,
+    beforeUpload: async (file) => {
+      try {
+        const text = await readTextFile(file);
+        setAnswer(text);
+        message.success(`已导入作文：${file.name}`);
+      } catch {
+        message.error("作文文件读取失败");
+      }
+      return false;
+    },
+  };
 
   return (
     <>
@@ -98,75 +108,65 @@ export default function GradingPage() {
         />
       ) : null}
 
+      <Typography.Paragraph type="secondary" style={{ marginBottom: 16 }}>
+        请粘贴或上传真实考试的<strong>给定材料</strong>、<strong>题干与作答要求</strong>，以及你的<strong>完整大作文</strong>。系统按标准大作文五维评分，不依赖内置题库。
+      </Typography.Paragraph>
+
       <Row gutter={16}>
-        <Col span={6}>
-          <Card title="作文题库" size="small">
-            <List
-              dataSource={list ?? []}
-              renderItem={(item) => (
-                <List.Item
-                  style={{ cursor: "pointer", background: item.id === selectedId ? "#e6f4ff" : undefined }}
-                  onClick={() => setSelectedId(item.id)}
-                >
-                  <div>
-                    <Typography.Text>{item.title}</Typography.Text>
-                    <br />
-                    <Tag style={{ marginTop: 4 }}>{item.question_type_label ?? "申论大作文"}</Tag>
-                  </div>
-                </List.Item>
-              )}
-            />
-          </Card>
-        </Col>
-        <Col span={10}>
+        <Col xs={24} lg={12}>
           <Card
-            title="题干与作答要求"
+            title="给定材料（可选）"
             size="small"
             extra={
-              detail ? (
-                <Typography.Text type="secondary">
-                  满分 {detail.score} · {wordMin}～{wordMax} 字
-                </Typography.Text>
-              ) : null
+              <Upload {...materialUpload}>
+                <Button size="small" icon={<UploadOutlined />}>
+                  上传 .txt
+                </Button>
+              </Upload>
             }
           >
-            <Typography.Paragraph style={{ whiteSpace: "pre-wrap" }}>{detail?.prompt}</Typography.Paragraph>
-            {detail?.reference_material ? (
-              <>
-                <Typography.Title level={5} style={{ marginTop: 16 }}>
-                  参考背景（可选阅读）
-                </Typography.Title>
-                <Typography.Paragraph type="secondary" style={{ whiteSpace: "pre-wrap" }}>
-                  {detail.reference_material}
-                </Typography.Paragraph>
-              </>
-            ) : null}
-            {detail?.scoring_points?.length ? (
-              <>
-                <Typography.Title level={5} style={{ marginTop: 16 }}>
-                  评分维度
-                </Typography.Title>
-                <Space wrap>
-                  {detail.scoring_points.map((d) => (
-                    <Tag key={d.id}>
-                      {d.label}（{d.max_score} 分）
-                    </Tag>
-                  ))}
-                </Space>
-              </>
-            ) : null}
+            <Input.TextArea
+              rows={10}
+              value={userMaterial}
+              onChange={(e) => setUserMaterial(e.target.value)}
+              placeholder="粘贴申论给定材料全文；无材料题可留空。"
+            />
+            <Upload.Dragger {...materialUpload} style={{ marginTop: 12 }}>
+              <p className="ant-upload-drag-icon">
+                <InboxOutlined />
+              </p>
+              <p className="ant-upload-text">或拖拽材料文本文件到此处</p>
+            </Upload.Dragger>
           </Card>
         </Col>
-        <Col span={8}>
-          <Card title="我的作文" size="small">
+        <Col xs={24} lg={12}>
+          <Card title="题干与作答要求" size="small" style={{ marginBottom: 16 }}>
             <Input.TextArea
-              rows={18}
+              rows={6}
+              value={userPrompt}
+              onChange={(e) => setUserPrompt(e.target.value)}
+              placeholder="粘贴题目要求，如：结合给定材料，围绕××主题，自拟题目写一篇文章；字数 800～1200 字…"
+            />
+          </Card>
+          <Card
+            title="我的作文"
+            size="small"
+            extra={
+              <Upload {...answerUpload}>
+                <Button size="small" icon={<UploadOutlined />}>
+                  上传 .txt
+                </Button>
+              </Upload>
+            }
+          >
+            <Input.TextArea
+              rows={14}
               value={answer}
               onChange={(e) => setAnswer(e.target.value)}
-              placeholder="请在此输入完整大作文正文（含标题与分段）…"
+              placeholder="粘贴或输入完整大作文正文（含标题与分段）…"
             />
-            <Typography.Text type={wordCount < wordMin ? "warning" : "secondary"}>
-              {wordCount} 字（建议 {wordMin}～{wordMax} 字）
+            <Typography.Text type={wordCount < WORD_MIN ? "warning" : "secondary"}>
+              {wordCount} 字（一般建议 {WORD_MIN}～{WORD_MAX} 字，以题干为准）
             </Typography.Text>
             <Button
               type="primary"
@@ -176,7 +176,7 @@ export default function GradingPage() {
               loading={submit.isPending}
               onClick={() => submit.mutate()}
             >
-              提交批改
+              提交 AI 批改
             </Button>
           </Card>
         </Col>

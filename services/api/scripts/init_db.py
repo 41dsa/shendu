@@ -9,11 +9,25 @@ from sqlalchemy import inspect, text
 
 from app.config import settings
 from app.database import Base, SessionLocal, engine
+from app.domain.essay import DEFAULT_RUBRIC_DIMENSIONS, USER_ESSAY_QUESTION_ID
 from app.models.entities import PromptPurpose, PromptVersion, Question, QuestionType, RedeemCode, RedeemCodeStatus
 from app.services.grading_service import SYSTEM_PROMPT
 
 DEV_TEST_CODE = "TEST-DEV-LICENSE"
 DEMO_QUESTION_ID = "demo-essay-001"
+
+USER_ESSAY_PLACEHOLDER = Question(
+    id=USER_ESSAY_QUESTION_ID,
+    title="用户自备题干与材料",
+    question_type=QuestionType.essay,
+    score=40,
+    word_limit=1200,
+    prompt="（用户在提交批改时填写题干与作答要求）",
+    material="",
+    material_structured={"genre": "essay", "word_min": 800, "word_max": 1200},
+    scoring_points=DEFAULT_RUBRIC_DIMENSIONS,
+    published=False,
+)
 
 DEMO_ESSAY = Question(
     id=DEMO_QUESTION_ID,
@@ -73,6 +87,21 @@ def ensure_submission_columns() -> None:
             conn.execute(text("ALTER TABLE submissions ADD COLUMN parent_submission_id VARCHAR(36)"))
         if "attempt" not in cols:
             conn.execute(text("ALTER TABLE submissions ADD COLUMN attempt INTEGER DEFAULT 1"))
+        if "user_prompt" not in cols:
+            conn.execute(text("ALTER TABLE submissions ADD COLUMN user_prompt TEXT"))
+        if "user_material" not in cols:
+            conn.execute(text("ALTER TABLE submissions ADD COLUMN user_material TEXT"))
+
+
+def upsert_user_essay_placeholder(db) -> None:
+    row = db.get(Question, USER_ESSAY_QUESTION_ID)
+    if row:
+        row.title = USER_ESSAY_PLACEHOLDER.title
+        row.scoring_points = USER_ESSAY_PLACEHOLDER.scoring_points
+        row.material_structured = USER_ESSAY_PLACEHOLDER.material_structured
+        row.published = False
+        return
+    db.add(USER_ESSAY_PLACEHOLDER)
 
 
 def upsert_demo_essay(db) -> None:
@@ -114,6 +143,7 @@ def main() -> None:
     db = SessionLocal()
     try:
         upsert_demo_essay(db)
+        upsert_user_essay_placeholder(db)
         seed_default_prompt(db)
         dev_code = db.get(RedeemCode, DEV_TEST_CODE)
         if not dev_code:
@@ -123,7 +153,10 @@ def main() -> None:
             dev_code.used_by_user_id = None
             dev_code.used_at = None
         db.commit()
-        print(f"DB initialized. Demo: 申论大作文 ({DEMO_QUESTION_ID}). Test code: {DEV_TEST_CODE}")
+        print(
+            f"DB initialized. User essay: {USER_ESSAY_QUESTION_ID}. "
+            f"Demo bank: {DEMO_QUESTION_ID}. Test code: {DEV_TEST_CODE}"
+        )
     finally:
         db.close()
 

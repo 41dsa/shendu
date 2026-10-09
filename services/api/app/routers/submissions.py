@@ -15,6 +15,7 @@ from app.models.entities import (
     SubmissionStatus,
     User,
 )
+from app.domain.essay import USER_ESSAY_QUESTION_ID
 from app.schemas.submission import SubmissionResponse, SubmissionUpsert, SubmitGradingResponse
 from app.services.ai_client import get_credential
 from app.services.events_service import track_event
@@ -30,39 +31,62 @@ def upsert_submission(
     _lic: License = Depends(get_active_license),
     db: Session = Depends(get_db),
 ) -> SubmissionResponse:
-    if not db.get(Question, body.question_id):
-        raise HTTPException(status_code=404, detail="题目不存在")
-    row = (
-        db.query(Submission)
-        .filter(
-            Submission.user_id == user.id,
-            Submission.question_id == body.question_id,
-            Submission.status == SubmissionStatus.draft,
-            Submission.attempt == 1,
-        )
-        .first()
-    )
     status = SubmissionStatus.draft if body.status == "draft" else SubmissionStatus.submitted
-    if row:
-        row.content = body.content
-        row.status = status
-        if status == SubmissionStatus.submitted:
-            row.submitted_at = datetime.now(UTC)
+
+    if body.question_id:
+        if not db.get(Question, body.question_id):
+            raise HTTPException(status_code=404, detail="题目不存在")
+        row = (
+            db.query(Submission)
+            .filter(
+                Submission.user_id == user.id,
+                Submission.question_id == body.question_id,
+                Submission.status == SubmissionStatus.draft,
+                Submission.attempt == 1,
+            )
+            .first()
+        )
+        if row:
+            row.content = body.content
+            row.status = status
+            if status == SubmissionStatus.submitted:
+                row.submitted_at = datetime.now(UTC)
+        else:
+            row = Submission(
+                user_id=user.id,
+                question_id=body.question_id,
+                content=body.content,
+                status=status,
+            )
+            if status == SubmissionStatus.submitted:
+                row.submitted_at = datetime.now(UTC)
+            db.add(row)
     else:
+        prompt = (body.user_prompt or "").strip()
+        if not prompt:
+            raise HTTPException(status_code=400, detail="请填写题干与作答要求")
+        if not db.get(Question, USER_ESSAY_QUESTION_ID):
+            raise HTTPException(status_code=503, detail="服务未初始化，请联系管理员运行 init_db")
+        material = (body.user_material or "").strip() or None
         row = Submission(
             user_id=user.id,
-            question_id=body.question_id,
+            question_id=USER_ESSAY_QUESTION_ID,
+            user_prompt=prompt,
+            user_material=material,
             content=body.content,
             status=status,
         )
         if status == SubmissionStatus.submitted:
             row.submitted_at = datetime.now(UTC)
         db.add(row)
+
     db.commit()
     db.refresh(row)
     return SubmissionResponse(
         id=row.id,
         question_id=row.question_id,
+        user_prompt=row.user_prompt,
+        user_material=row.user_material,
         content=row.content,
         status=row.status.value,
         attempt=row.attempt,

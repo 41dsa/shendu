@@ -19,15 +19,6 @@ type ExamProfile = {
   job_category: string;
 };
 
-type QuestionItem = {
-  id: string;
-  title: string;
-  question_type_label?: string;
-  score: number;
-  word_min?: number;
-  word_limit: number;
-};
-
 type ScoringPoint = { label?: string; earned?: number; max?: number };
 type Issue = { tag?: string; explanation?: string };
 
@@ -55,11 +46,6 @@ export default function HomePage() {
   const { data: exam } = useQuery({
     queryKey: ["exam-profile"],
     queryFn: () => api<ExamProfile | null>("/exam-profiles"),
-  });
-
-  const { data: questions } = useQuery({
-    queryKey: ["questions"],
-    queryFn: () => api<QuestionItem[]>("/questions"),
   });
 
   const licensed = !!ent?.licensed;
@@ -101,7 +87,6 @@ export default function HomePage() {
   const payload = latestDetail?.payload ?? {};
   const dims = dimensionProgress(payload.scoring_points as ScoringPoint[] | undefined);
   const issues = (payload.issues as Issue[] | undefined)?.slice(0, 2) ?? [];
-  const featured = questions?.[0];
   const recent = coachHome?.recent_reports ?? reports?.slice(0, 3) ?? [];
   const focusFromCoach = coachHome?.focus_issue;
   const training = coachHome?.today_training;
@@ -121,7 +106,7 @@ export default function HomePage() {
           <Col>
             {ready ? (
               <Button type="primary" size="large">
-                <Link to={featured ? `/grading?question=${featured.id}` : "/grading"}>写一篇大作文</Link>
+                <Link to="/grading">上传材料并批改</Link>
               </Button>
             ) : licensed ? (
               <Button type="primary" size="large">
@@ -225,25 +210,19 @@ export default function HomePage() {
           </Card>
         </Col>
         <Col xs={24} md={8}>
-          <Card title="推荐题目">
-            {featured ? (
-              <Space direction="vertical" style={{ width: "100%" }}>
-                <Typography.Text strong>{featured.title}</Typography.Text>
-                <Tag>{featured.question_type_label ?? "申论大作文"}</Tag>
-                <Typography.Text type="secondary">
-                  满分 {featured.score} · {featured.word_min ?? 800}～{featured.word_limit} 字
-                </Typography.Text>
-                {ready ? (
-                  <Button type="primary" block>
-                    <Link to={`/grading?question=${featured.id}`}>去写这篇</Link>
-                  </Button>
-                ) : (
-                  <Typography.Text type="secondary">激活并配置 Key 后可练习</Typography.Text>
-                )}
-              </Space>
-            ) : (
-              <Typography.Text type="secondary">暂无题目，请运行 init_db 导入示例大作文。</Typography.Text>
-            )}
+          <Card title="如何开始">
+            <Space direction="vertical" style={{ width: "100%" }}>
+              <Typography.Text>1. 在批改页粘贴或上传给定材料、题干要求</Typography.Text>
+              <Typography.Text>2. 粘贴或上传你的大作文全文</Typography.Text>
+              <Typography.Text type="secondary">支持 .txt / .md 文本文件，无需从题库选题。</Typography.Text>
+              {ready ? (
+                <Button type="primary" block>
+                  <Link to="/grading">去批改</Link>
+                </Button>
+              ) : (
+                <Typography.Text type="secondary">激活并配置 Key 后可批改</Typography.Text>
+              )}
+            </Space>
           </Card>
         </Col>
       </Row>

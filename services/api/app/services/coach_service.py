@@ -268,11 +268,16 @@ def get_retry_context(db: Session, user_id: str, report_id: str) -> dict[str, An
         raise ValueError("SUBMISSION_NOT_FOUND")
     question = db.get(Question, submission.question_id)
     payload = report.payload or {}
+    custom = bool((submission.user_prompt or "").strip())
+    prompt = (submission.user_prompt or (question.prompt if question else "") or "").strip()
+    material = submission.user_material if submission.user_material is not None else (question.material if question else None)
+    title = "用户自备题目" if custom else (question.title if question else "")
     return {
         "report_id": report.id,
         "question_id": submission.question_id,
-        "question_title": question.title if question else "",
-        "prompt": (question.prompt if question else "") or "",
+        "question_title": title,
+        "prompt": prompt,
+        "reference_material": material,
         "first_content": submission.content,
         "first_score": payload.get("total_score"),
         "issues": payload.get("issues") or [],

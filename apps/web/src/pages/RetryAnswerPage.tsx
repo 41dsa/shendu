@@ -9,6 +9,7 @@ type RetryContext = {
   question_id: string;
   question_title: string;
   prompt: string;
+  reference_material?: string | null;
   first_content: string;
   first_score: number | null;
   issues: { tag?: string; severity?: string; explanation?: string }[];
@@ -55,6 +56,16 @@ export default function RetryAnswerPage() {
         />
         <Typography.Title level={5}>题干</Typography.Title>
         <Typography.Paragraph style={{ whiteSpace: "pre-wrap" }}>{data.prompt}</Typography.Paragraph>
+        {data.reference_material ? (
+          <>
+            <Typography.Title level={5} style={{ marginTop: 16 }}>
+              给定材料
+            </Typography.Title>
+            <Typography.Paragraph type="secondary" style={{ whiteSpace: "pre-wrap" }}>
+              {data.reference_material}
+            </Typography.Paragraph>
+          </>
+        ) : null}
       </Card>
 
       <Card title="首次主要问题">

@@ -88,11 +88,9 @@ export default function TrainingPage() {
         <Button key="s" type="primary" loading={start.isPending} onClick={() => start.mutate(task)}>
           开始
         </Button>,
-        task.question_id ? (
-          <Button key="g">
-            <Link to={`/grading?question=${task.question_id}`}>去批改</Link>
-          </Button>
-        ) : null,
+        <Button key="g">
+          <Link to="/grading">去批改</Link>
+        </Button>,
       ]}
     >
       <List.Item.Meta

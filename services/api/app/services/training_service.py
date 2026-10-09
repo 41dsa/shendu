@@ -9,7 +9,6 @@ from sqlalchemy.orm import Session
 
 from app.domain.essay import ABILITY_DIMENSIONS
 from app.models.entities import (
-    Question,
     TrainingKind,
     TrainingLevel,
     TrainingRecord,
@@ -78,9 +77,6 @@ def build_training_plan(db: Session, user_id: str) -> dict[str, Any]:
         if dim["score"] is not None and (weakest is None or dim["score"] < weakest["score"]):
             weakest = dim
 
-    demo_q = db.query(Question).filter(Question.published.is_(True)).order_by(Question.title).first()
-    qid = demo_q.id if demo_q else None
-
     w_level = suggest_level(weakest["score"] if weakest else None)
     focus = issues[0] if issues else None
 
@@ -92,8 +88,8 @@ def build_training_plan(db: Session, user_id: str) -> dict[str, Any]:
             "level": w_level.value,
             "ability_id": weakest["id"] if weakest else "A1",
             "ability_name": weakest["name"] if weakest else "立意与审题",
-            "instructions": "按考试要求写全文并提交批改，关注结构与论证。",
-            "question_id": qid,
+            "instructions": "在「批改」页上传或粘贴你的题干、材料与作文全文后提交 AI 批改。",
+            "question_id": None,
             "estimated_minutes": 45,
         },
     ]
@@ -106,8 +102,8 @@ def build_training_plan(db: Session, user_id: str) -> dict[str, Any]:
                 "level": w_level.value,
                 "ability_id": weakest["id"] if weakest else "A2",
                 "focus_tag": focus["tag"],
-                "instructions": "任选最近一题，只重写分论点段落 300 字左右，再合并进全文批改。",
-                "question_id": qid,
+                "instructions": "用同一套题干材料，只重写分论点段落约 300 字，再合并进全文重新批改。",
+                "question_id": None,
                 "estimated_minutes": 20,
             }
         )
@@ -125,8 +121,8 @@ def build_training_plan(db: Session, user_id: str) -> dict[str, Any]:
                 "level": lv.value,
                 "ability_id": dim["id"],
                 "ability_name": dim["name"],
-                "instructions": f"专项练 {dim['name']}，完成 1 篇大作文批改。",
-                "question_id": qid,
+                "instructions": f"专项练 {dim['name']}，自备题干与作文完成 1 次批改。",
+                "question_id": None,
                 "estimated_minutes": 40,
             }
         )

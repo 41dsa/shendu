@@ -16,8 +16,9 @@ from app.models.entities import (
     UserProviderCredential,
 )
 from app.services.ai_client import AiCallError, chat_completion_json, get_credential
-from app.domain.essay import essay_length_ratio, essay_word_bounds, issue_tag_prompt_hint
+from app.domain.essay import essay_length_ratio, issue_tag_prompt_hint
 from app.services.coach_service import build_retry_comparison, find_report_for_submission
+from app.services.essay_context import EssayGradingContext, resolve_essay_context, word_bounds_for_context
 from app.services.prompt_service import get_active_grading_system_prompt
 from app.services.grading_helpers import (
     answer_hash,
@@ -70,12 +71,12 @@ def append_step(job: GradingJob, step: str, detail: str = "done") -> None:
     job.current_step = step
 
 
-def rule_score_fallback(question: Question, answer: str) -> float:
-    points = question.scoring_points or []
-    max_score = float(question.score)
+def rule_score_fallback(ctx: EssayGradingContext, answer: str) -> float:
+    points = ctx.scoring_points or []
+    max_score = float(ctx.score)
     if not points:
         return 0.0
-    word_min, word_max = essay_word_bounds(question.material_structured, question.word_limit)
+    word_min, word_max = word_bounds_for_context(ctx)
     n = len(answer.strip())
     per = max_score / len(points)
     paragraphs = [p for p in answer.replace("\r", "").split("\n") if p.strip()]
@@ -120,7 +121,7 @@ def log_usage(
     )
 
 
-def short_circuit_payload(question: Question, reason: str, word_ratio: float) -> dict[str, Any]:
+def short_circuit_payload(_ctx: EssayGradingContext, reason: str, word_ratio: float) -> dict[str, Any]:
     return {
         "total_score": 0,
         "score_range": [0, 0],
@@ -153,13 +154,14 @@ async def run_grading_job(db: Session, job_id: str) -> None:
         job.error_message = "题目不存在"
         db.commit()
         return
+    ctx = resolve_essay_context(submission, question)
 
     job.status = GradingJobStatus.running
     db.commit()
 
     try:
         content = submission.content.strip()
-        word_min, word_max = essay_word_bounds(question.material_structured, question.word_limit)
+        word_min, word_max = word_bounds_for_context(ctx)
         word_ratio = essay_length_ratio(len(content), word_min)
 
         for step in GRADING_STEPS[:5]:
@@ -168,7 +170,7 @@ async def run_grading_job(db: Session, job_id: str) -> None:
 
         if len(content) < 10 or word_ratio < 0.3:
             reason = "作文过短" if len(content) < 10 else f"字数不足（低于建议字数 {word_min} 字的约 30%）"
-            payload = short_circuit_payload(question, reason, word_ratio)
+            payload = short_circuit_payload(ctx, reason, word_ratio)
             append_step(job, "generate_report", "short_circuit")
             report = Report(grading_job_id=job.id, user_id=job.user_id, payload=payload)
             db.add(report)
@@ -178,7 +180,7 @@ async def run_grading_job(db: Session, job_id: str) -> None:
             db.commit()
             return
 
-        h = answer_hash(question.id, content)
+        h = answer_hash(ctx.cache_context_key, content)
         cached = (
             db.query(GradingAnswerCache)
             .filter(GradingAnswerCache.question_id == question.id, GradingAnswerCache.answer_hash == h)
@@ -202,16 +204,16 @@ async def run_grading_job(db: Session, job_id: str) -> None:
         if not cred:
             raise AiCallError("NO_KEY", "未配置主模型 API Key")
 
-        essay_prompt = (question.prompt or "").strip() or (question.material or "")
+        essay_prompt = ctx.prompt.strip() or (ctx.reference_material or "")
         user_prompt = json.dumps(
             {
                 "task": "essay",
-                "question_type": question.question_type.value,
-                "title": question.title,
+                "question_type": ctx.question_type.value,
+                "title": ctx.title,
                 "prompt": essay_prompt,
-                "reference_material": question.material,
-                "rubric_dimensions": question.scoring_points,
-                "max_score": question.score,
+                "reference_material": ctx.reference_material,
+                "rubric_dimensions": ctx.scoring_points,
+                "max_score": ctx.score,
                 "word_min": word_min,
                 "word_max": word_max,
                 "user_essay": content,
@@ -220,7 +222,7 @@ async def run_grading_job(db: Session, job_id: str) -> None:
         )
 
         append_step(job, "rule_score")
-        rule = rule_score_fallback(question, content)
+        rule = rule_score_fallback(ctx, content)
         db.commit()
 
         append_step(job, "llm_score", "calling")
@@ -236,7 +238,7 @@ async def run_grading_job(db: Session, job_id: str) -> None:
         payload["rule_score"] = rule
 
         # 为维度条目补上 ability 字段，供 coach 能力聚合（与题库 rubric 对齐）
-        rubric_by_id = {p.get("id"): p for p in (question.scoring_points or []) if p.get("id")}
+        rubric_by_id = {p.get("id"): p for p in (ctx.scoring_points or []) if p.get("id")}
         for point in payload.get("scoring_points") or []:
             if point.get("ability"):
                 continue
@@ -269,30 +271,36 @@ async def run_grading_job(db: Session, job_id: str) -> None:
             except AiCallError:
                 consensus_scores.append(llm_score)
 
-        payload["max_score"] = float(question.score)
+        payload["max_score"] = float(ctx.score)
         payload["consensus_scores"] = consensus_scores
-        payload["consensus_rate"] = compute_consensus_rate(consensus_scores, float(question.score))
+        payload["consensus_rate"] = compute_consensus_rate(consensus_scores, float(ctx.score))
         payload["total_score"] = llm_score
 
         if not payload.get("score_range"):
             payload["score_range"] = [
                 max(0, round(llm_score - 1, 1)),
-                min(float(question.score), round(llm_score + 1, 1)),
+                min(float(ctx.score), round(llm_score + 1, 1)),
             ]
 
-        conf = compute_confidence(llm_score, rule, float(question.score), consensus_delta, word_ratio)
+        conf = compute_confidence(llm_score, rule, float(ctx.score), consensus_delta, word_ratio)
         payload["confidence"] = conf
         if conf == "low":
             payload["display_mode"] = "reference_only"
         else:
             payload["display_mode"] = "normal"
 
-        payload["essay_meta"] = {"word_min": word_min, "word_max": word_max}
+        payload["essay_meta"] = {
+            "word_min": word_min,
+            "word_max": word_max,
+            "title": ctx.title,
+            "prompt_excerpt": essay_prompt[:200],
+            "has_user_material": bool(ctx.reference_material),
+        }
         payload["scoring_basis"] = build_scoring_basis(
             payload,
             {
-                "scoring_points": question.scoring_points,
-                "max_score": question.score,
+                "scoring_points": ctx.scoring_points,
+                "max_score": ctx.score,
                 "prompt_excerpt": essay_prompt[:200],
             },
         )

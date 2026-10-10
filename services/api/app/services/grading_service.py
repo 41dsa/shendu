@@ -22,6 +22,7 @@ from app.services.ai_client import AiCallError, chat_completion_json, get_creden
 from app.domain.essay import essay_length_ratio, issue_tag_prompt_hint
 from app.services.coach_service import build_retry_comparison, find_report_for_submission
 from app.services.essay_context import EssayGradingContext, resolve_essay_context, word_bounds_for_context
+from app.services.essay_writing_guide import writing_guide_for_submission
 from app.services.prompt_service import get_active_grading_system_prompt
 from app.services.grading_helpers import (
     answer_hash,
@@ -71,6 +72,12 @@ SYSTEM_PROMPT = (
 )
 
 CONSENSUS_PROMPT = """你是申论大作文严格阅卷人。根据题干与用户作文，仅输出 JSON：{"score": number}。"""
+
+_WRITING_GUIDE_SYSTEM_APPEND = (
+    "\n\n用户 JSON 中若含 writing_technique_reference，表示内部写作技巧参考。"
+    "给分仍以 rubric_dimensions 为准；issues/suggestions/review_notes 应对照该参考"
+    "（如论点鲜明、结构、论证、语言等要求）给出可操作的改进建议，勿照搬参考原文。"
+)
 
 
 def append_step(job: GradingJob, step: str, detail: str = "done") -> None:
@@ -221,26 +228,27 @@ async def run_grading_job(db: Session, job_id: str) -> None:
             raise AiCallError("NO_KEY", "未配置主模型 API Key")
 
         essay_prompt = ctx.prompt.strip() or (ctx.reference_material or "")
-        user_prompt = json.dumps(
-            {
-                "task": "essay",
-                "question_type": ctx.question_type.value,
-                "title": ctx.title,
-                "prompt": essay_prompt,
-                "reference_material": ctx.reference_material,
-                "rubric_dimensions": ctx.scoring_points,
-                "focus_points": ctx.focus_points,
-                "loss_rules": ctx.loss_rules,
-                "standard_version": ctx.standard_version,
-                "exam_policy": ctx.exam_policy,
-                "exam_standard_version": ctx.exam_standard_version,
-                "max_score": ctx.score,
-                "word_min": word_min,
-                "word_max": word_max,
-                "user_essay": content,
-            },
-            ensure_ascii=False,
-        )
+        guide_excerpt = writing_guide_for_submission(submission, question)
+        payload_in: dict[str, Any] = {
+            "task": "essay",
+            "question_type": ctx.question_type.value,
+            "title": ctx.title,
+            "prompt": essay_prompt,
+            "reference_material": ctx.reference_material,
+            "rubric_dimensions": ctx.scoring_points,
+            "focus_points": ctx.focus_points,
+            "loss_rules": ctx.loss_rules,
+            "standard_version": ctx.standard_version,
+            "exam_policy": ctx.exam_policy,
+            "exam_standard_version": ctx.exam_standard_version,
+            "max_score": ctx.score,
+            "word_min": word_min,
+            "word_max": word_max,
+            "user_essay": content,
+        }
+        if guide_excerpt:
+            payload_in["writing_technique_reference"] = guide_excerpt
+        user_prompt = json.dumps(payload_in, ensure_ascii=False)
 
         append_step(job, "rule_score")
         rule = rule_score_fallback(ctx, content)
@@ -250,6 +258,8 @@ async def run_grading_job(db: Session, job_id: str) -> None:
         db.commit()
 
         system_prompt = get_active_grading_system_prompt(db, SYSTEM_PROMPT)
+        if guide_excerpt:
+            system_prompt = system_prompt + _WRITING_GUIDE_SYSTEM_APPEND
         try:
             raw, usage = await asyncio.wait_for(
                 chat_completion_json(cred, system_prompt, user_prompt),
@@ -352,6 +362,7 @@ async def run_grading_job(db: Session, job_id: str) -> None:
             "standard_version": ctx.standard_version,
             "exam_standard_version": ctx.exam_standard_version,
             "grading_standard_mode": grading_standard_mode,
+            "writing_guide_applied": bool(guide_excerpt),
         }
         if ctx.standard_version is not None:
             payload["standard_version"] = ctx.standard_version

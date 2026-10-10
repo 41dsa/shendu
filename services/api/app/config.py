@@ -32,6 +32,10 @@ class Settings(BaseSettings):
     standards_upload_dir: str = "uploads/standards"
     standard_publish_min_confidence: float = 0.85
     standards_annotation_dir: str = ""
+    # 自备批改：注入写作技巧参考（见 data/guides/essay_writing_technique.txt）
+    essay_writing_guide_enabled: bool = False
+    essay_writing_guide_path: str = ""
+    essay_writing_guide_max_chars: int = 10000
 
     @property
     def standards_annotation_path(self) -> Path:

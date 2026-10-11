@@ -148,7 +148,13 @@ async def _run_pipeline_async(db: Session, job_id: str) -> None:
     )
 
     essay = build_structured_essay(db, question)
-    append_job_step(db, job, "structured", essay.model_dump())
+    from app.services.standard_engine.question_parse import parse_essay_question_metadata
+
+    structured_payload = {
+        **essay.model_dump(),
+        "parse": parse_essay_question_metadata(question),
+    }
+    append_job_step(db, job, "structured", structured_payload)
 
     user_id = job.created_by_user_id or ""
     cached_p05: dict[str, Any] | None = None
@@ -247,6 +253,9 @@ async def _run_pipeline_async(db: Session, job_id: str) -> None:
     validation["standard_confidence"] = agg_conf
     validation["confidence_band"] = confidence_band(agg_conf)
     append_job_step(db, job, "validate", validation)
+    enriched = validation.get("enriched_rubric")
+    if enriched:
+        append_job_step(db, job, "rubric_merged", enriched, detail="enriched_contract")
 
     job.status = (
         StandardGenerationJobStatus.validated

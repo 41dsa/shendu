@@ -2,6 +2,11 @@
 
 from typing import Any
 
+from app.domain.standard_engine.criterion_confidence import (
+    enrich_rubric_contract,
+    summarize_criterion_tiers,
+)
+
 
 def _check_score_sum(rubric: dict[str, Any]) -> dict[str, Any]:
     total = int(rubric.get("total_score") or 0)
@@ -81,6 +86,25 @@ def _check_prompt_traceability(
     }
 
 
+def _check_criterion_intervals(rubric: dict[str, Any]) -> dict[str, Any]:
+    bad: list[str] = []
+    for c in rubric.get("criteria") or []:
+        cid = str(c.get("id") or "")
+        mn = c.get("score_min")
+        mx = c.get("score_max")
+        cap = float(c.get("max_score") or 0)
+        if cap <= 0 or mn is None or mx is None:
+            continue
+        if float(mn) > float(mx) or float(mx) > cap + 0.01:
+            bad.append(cid)
+    return {
+        "id": "criterion_score_intervals",
+        "passed": len(bad) == 0,
+        "invalid_criterion_ids": bad,
+        "detail": "准则分区间须满足 score_min ≤ score_max ≤ max_score" if bad else "ok",
+    }
+
+
 def run_standard_validators(
     *,
     question_standard: dict[str, Any],
@@ -88,6 +112,8 @@ def run_standard_validators(
     prompt_text: str,
     reference_coverage_ratio: float | None = None,
 ) -> dict[str, Any]:
+    rubric = enrich_rubric_contract(rubric)
+    tier_summary = summarize_criterion_tiers(rubric.get("criteria") or [])
     checks = [
         _check_prompt_traceability(question_standard, rubric, prompt_text),
         _check_dimension_consistency(rubric),
@@ -104,9 +130,12 @@ def run_standard_validators(
             "detail": "参考答案/解析覆盖" if ref_ratio >= 0.85 else "覆盖不足",
         },
     )
+    checks.append(_check_criterion_intervals(rubric))
     overall = all(c.get("passed") for c in checks)
     return {
         "checks": checks,
         "overall_passed": overall,
         "blocking_issues": [c["id"] for c in checks if not c.get("passed")],
+        "criterion_confidence_tiers": tier_summary,
+        "enriched_rubric": rubric,
     }

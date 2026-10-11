@@ -60,9 +60,16 @@ _SYSTEM_PROMPT_TEMPLATE = """你是申论大作文阅卷专家（不是小题概
      "explanation": string, "user_quote": string, "evidence_ref": string}
   ],
   "suggestions": [string],
-  "review_notes": string
+  "review_notes": string,
+  "evidence_chain": [
+    {"criterion_id": string, "label": string, "hit": "full"|"partial"|"miss",
+     "user_quote": string, "material_ref": string, "earned": number, "max": number, "reason": string}
+  ]
 }
 scoring_points 对应题目给出的维度（如立意、结构、论证、语言）。勿按「从材料摘抄要点」方式评分。
+若输入含 rubric_criteria，须按 semantic 匹配（acceptable_expressions / typical_gaps），禁止纯关键词匹配。
+usage_band=low 的准则仅作建议，不得作为强制扣分唯一依据。
+evidence_chain 0～5 条，追溯「维度/准则→作文片段→材料依据（若有）」；无准则可省略该数组。
 issues 最多 3 条；suggestions 3～5 条。tag 必须使用 PRD 编号+名称，例如："""
 
 SYSTEM_PROMPT = (
@@ -237,8 +244,10 @@ async def run_grading_job(db: Session, job_id: str) -> None:
             "reference_material": ctx.reference_material,
             "rubric_dimensions": ctx.scoring_points,
             "focus_points": ctx.focus_points,
-            "loss_rules": ctx.loss_rules,
-            "standard_version": ctx.standard_version,
+                "loss_rules": ctx.loss_rules,
+                "rubric_criteria": ctx.rubric_criteria,
+                "score_confidence_declaration": ctx.score_confidence_declaration,
+                "standard_version": ctx.standard_version,
             "exam_policy": ctx.exam_policy,
             "exam_standard_version": ctx.exam_standard_version,
             "max_score": ctx.score,
@@ -363,6 +372,7 @@ async def run_grading_job(db: Session, job_id: str) -> None:
             "exam_standard_version": ctx.exam_standard_version,
             "grading_standard_mode": grading_standard_mode,
             "writing_guide_applied": bool(guide_excerpt),
+            "score_confidence_declaration": ctx.score_confidence_declaration,
         }
         if ctx.standard_version is not None:
             payload["standard_version"] = ctx.standard_version

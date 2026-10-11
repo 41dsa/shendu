@@ -249,4 +249,6 @@ def build_scoring_basis(payload: dict[str, Any], question: dict[str, Any]) -> di
         "primary_llm_score": payload.get("primary_llm_score"),
         "confidence_note": payload.get("confidence_note"),
         "confidence_scope": payload.get("confidence_scope"),
+        "evidence_chain": payload.get("evidence_chain"),
+        "score_confidence_declaration": (payload.get("essay_meta") or {}).get("score_confidence_declaration"),
     }

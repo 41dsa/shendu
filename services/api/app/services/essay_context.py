@@ -10,6 +10,7 @@ from app.models.entities import Question, QuestionType, Submission
 from app.services.standard_engine.exam_standard_service import get_active_exam_standard
 from app.services.standard_engine.standard_store import (
     get_active_standard_payload,
+    rubric_criteria_from_payload,
     rubric_dimensions_from_payload,
 )
 
@@ -27,6 +28,8 @@ class EssayGradingContext:
     cache_context_key: str
     focus_points: list[str] = field(default_factory=list)
     loss_rules: list[Any] = field(default_factory=list)
+    rubric_criteria: list[Any] = field(default_factory=list)
+    score_confidence_declaration: str | None = None
     standard_version: int | None = None
     exam_policy: dict[str, Any] | None = None
     exam_standard_version: int | None = None
@@ -52,6 +55,8 @@ def resolve_essay_context(
     scoring = question.scoring_points or DEFAULT_RUBRIC_DIMENSIONS
     focus_points: list[str] = []
     loss_rules: list[Any] = []
+    rubric_criteria: list[Any] = []
+    score_confidence_declaration: str | None = None
     standard_version: int | None = None
     exam_policy: dict[str, Any] | None = None
     exam_standard_version: int | None = None
@@ -66,6 +71,10 @@ def resolve_essay_context(
             q_std = active.get("question_standard") or {}
             focus_points = list(q_std.get("focus_points") or [])
             loss_rules = list(active.get("loss_rules") or [])
+            rubric_criteria = rubric_criteria_from_payload(active)
+            rubric_std = active.get("rubric_standard") or {}
+            rules = rubric_std.get("scoring_rules") or {}
+            score_confidence_declaration = rules.get("score_confidence_declaration")
             meta = active.get("_meta") or {}
             standard_version = meta.get("version")
 
@@ -99,6 +108,8 @@ def resolve_essay_context(
         cache_context_key=cache_key,
         focus_points=focus_points,
         loss_rules=loss_rules,
+        rubric_criteria=rubric_criteria,
+        score_confidence_declaration=score_confidence_declaration,
         standard_version=standard_version,
         exam_policy=exam_policy,
         exam_standard_version=exam_standard_version,

@@ -45,3 +45,8 @@ def rubric_dimensions_from_payload(payload: dict) -> list[dict]:
             }
         )
     return out or []
+
+
+def rubric_criteria_from_payload(payload: dict) -> list[dict]:
+    rubric = payload.get("rubric_standard") or {}
+    return list(rubric.get("criteria") or [])

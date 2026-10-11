@@ -53,6 +53,20 @@ export default function ReportScoringBasis({
   const consensusDelta = basis.consensus_delta as number | null | undefined;
   const discarded = consensusDiscarded || Boolean(basis.consensus_discarded);
   const rubric = (basis.scoring_points_rubric as RubricRow[] | undefined) ?? [];
+  const evidenceChain =
+    (basis.evidence_chain as
+      | {
+          criterion_id?: string;
+          label?: string;
+          hit?: string;
+          user_quote?: string;
+          material_ref?: string;
+          earned?: number;
+          max?: number;
+          reason?: string;
+        }[]
+      | undefined) ?? [];
+  const scoreDecl = basis.score_confidence_declaration as string | undefined;
 
   const ruleNum = Number(ruleScore);
   const finalNum = Number(finalLlm);
@@ -165,6 +179,39 @@ export default function ReportScoringBasis({
           ))}
         </ul>
       </div>
+
+      {evidenceChain.length > 0 ? (
+        <div>
+          <Typography.Text strong>评分证据链</Typography.Text>
+          <List
+            size="small"
+            style={{ marginTop: 8 }}
+            dataSource={evidenceChain.slice(0, 5)}
+            renderItem={(row, i) => (
+              <List.Item>
+                <Space direction="vertical" size={2} style={{ width: "100%" }}>
+                  <Typography.Text>
+                    {row.label ?? row.criterion_id ?? `要点 ${i + 1}`}
+                    {row.hit ? ` · ${row.hit === "full" ? "命中" : row.hit === "partial" ? "部分命中" : "未命中"}` : ""}
+                    {row.earned != null && row.max != null ? ` · ${row.earned}/${row.max} 分` : ""}
+                  </Typography.Text>
+                  {row.user_quote ? (
+                    <Typography.Text type="secondary">你的表述：{row.user_quote}</Typography.Text>
+                  ) : null}
+                  {row.material_ref ? (
+                    <Typography.Text type="secondary">材料依据：{row.material_ref}</Typography.Text>
+                  ) : null}
+                  {row.reason ? <Typography.Text type="secondary">{row.reason}</Typography.Text> : null}
+                </Space>
+              </List.Item>
+            )}
+          />
+        </div>
+      ) : null}
+
+      {scoreDecl ? (
+        <Typography.Text type="secondary">标准分值说明：{scoreDecl}（非官方阅卷尺度）</Typography.Text>
+      ) : null}
 
       {reviewNotes ? (
         <div>

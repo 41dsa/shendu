@@ -5,6 +5,7 @@ from typing import Any
 
 from app.domain.essay import DEFAULT_RUBRIC_DIMENSIONS, label_to_ability
 from app.domain.standard_engine.confidence import compute_confidence_score
+from app.domain.standard_engine.criterion_confidence import enrich_rubric_contract
 from app.schemas.standard_engine import (
     EssayQuestionSchema,
     MaterialAnalysisSchema,
@@ -97,11 +98,16 @@ def stub_rubric_standard(essay: EssayQuestionSchema, q_std: QuestionStandardSche
                 confidence=compute_confidence_score(components),
             )
         )
-    return RubricStandardSchema(
+    raw = RubricStandardSchema(
         question_id=essay.question_id,
         total_score=essay.score,
         dimensions=dimensions,
         criteria=criteria,
-        scoring_rules={"partial_hit_policy": "partial 给 50% 准则分"},
+        scoring_rules={
+            "partial_hit_policy": "partial 给 50% 准则分",
+            "score_confidence_declaration": "medium",
+        },
         loss_rules=[],
     )
+    enriched = enrich_rubric_contract(raw.model_dump())
+    return RubricStandardSchema.model_validate(enriched)

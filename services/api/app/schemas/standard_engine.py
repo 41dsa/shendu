@@ -86,8 +86,11 @@ class RubricCriterionSchema(BaseModel):
     counter_examples: list[str] = Field(default_factory=list)
     issue_tags: list[str] = Field(default_factory=list)
     max_score: float = 0
+    score_min: float | None = None
+    score_max: float | None = None
     weight: float = 0
     confidence: float = 0.85
+    usage_band: Literal["high", "medium", "low"] | None = None
     source_refs: list[SourceRefSchema] = Field(default_factory=list)
 
 

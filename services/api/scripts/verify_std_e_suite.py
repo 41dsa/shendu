@@ -29,6 +29,7 @@ def main() -> None:
     run("verify_essay_exam_policy.py", env={"STANDARD_GEN_MODE": "stub", "STANDARD_AUTO_PUBLISH": "0"})
     run("verify_practice_catalog.py", env={"STANDARD_GEN_MODE": "stub", "STANDARD_AUTO_PUBLISH": "0"})
     run("verify_exam_catalog.py")
+    run("verify_prod_eval_alignment.py")
     print("\nverify_std_e_suite: all ok")
 
 

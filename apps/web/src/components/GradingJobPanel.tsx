@@ -59,13 +59,46 @@ const STEP_DETAIL_ZH: Record<string, string> = {
   cache_hit: "命中缓存",
   short_circuit: "提前结束",
   consensus: "共识复核",
+  gate_reject: "未通过输入校验，已终止",
+  level_adapter: "已匹配考试层级与字数要求",
+  deterministic: "规则引擎匹配要点",
+  scored: "规则打分完成",
+  passed: "校验通过",
+};
+
+const EXAM_LEVEL_ZH: Record<string, string> = {
+  provincial: "副省级",
+  municipal: "市地级",
+  enforcement: "行政执法",
+};
+
+const TIER_ZH: Record<string, string> = {
+  t1: "一类文",
+  t2: "二类文",
+  t3: "三类文",
+  t4: "四类文",
 };
 
 function formatStepDetail(detail: string): string {
   const mapped = STEP_DETAIL_ZH[detail];
   if (mapped) return mapped;
+  if (detail.startsWith("gate_ok:")) {
+    const level = detail.slice("gate_ok:".length);
+    const levelZh = EXAM_LEVEL_ZH[level] ?? level;
+    return `校验通过，考试层级：${levelZh}`;
+  }
+  if (detail.startsWith("hits:")) {
+    const n = detail.slice("hits:".length);
+    return `命中 ${n} 个要点`;
+  }
   if (detail.startsWith("failed:")) {
     return `失败（${detail.slice("failed:".length)}）`;
+  }
+  if (EXAM_LEVEL_ZH[detail]) {
+    return `考试层级：${EXAM_LEVEL_ZH[detail]}`;
+  }
+  if (TIER_ZH[detail]) {
+    return `预估档位：${TIER_ZH[detail]}`;
   }
   return detail;
 }
@@ -197,7 +230,7 @@ export default function GradingJobPanel({ jobId, onClose }: Props) {
       raw.includes("unexpected keyword argument")
         ? "自备题准备打分标准时程序接口不匹配（已修复需重启 API）。请重启后端服务后刷新页面再试一次。"
         : raw.includes("TIMEOUT") || raw.includes("超时")
-        ? "模型调用超时或长时间无响应。请到「AI 设置」检查 Base URL（DeepSeek 需 https://api.deepseek.com/v1）、模型名与 Key，并点「测试连接」。开发环境需重启 API 后重试（已默认进程内批改，无需 Celery worker）。"
+        ? "模型调用超时或长时间无响应。请到「AI 设置」检查 OpenAI 兼容 Base URL（一般为 …/v1）、模型名与 Key，并点「测试连接」。开发环境需重启 API 后重试（已默认进程内批改，无需 Celery worker）。"
         : raw.includes("UPSTREAM") && raw.includes("400")
           ? "模型接口返回 400：常见原因是 Base URL 未带 /v1、模型名称错误或 Key 无权限。请到「AI 设置」核对并重新「测试连接」。"
           : raw.includes("INVALID_KEY") || raw.includes("NO_KEY")
@@ -268,7 +301,17 @@ export default function GradingJobPanel({ jobId, onClose }: Props) {
       style={{ marginBottom: 16, borderColor: "#91caff" }}
       extra={
         <Typography.Text type="secondary">
-          {inProgress ? `本步已等待 ${formatWaitDuration(elapsedSec)}` : data.status}
+          {inProgress
+            ? `本步已等待 ${formatWaitDuration(elapsedSec)}`
+            : data.status === "queued"
+              ? "排队中"
+              : data.status === "running"
+                ? "批改中"
+                : data.status === "succeeded"
+                  ? "已完成"
+                  : data.status === "failed"
+                    ? "失败"
+                    : data.status}
           {onClose ? (
             <>
               {" · "}

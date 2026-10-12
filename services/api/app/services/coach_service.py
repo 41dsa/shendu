@@ -45,8 +45,10 @@ def build_retry_comparison(first: dict[str, Any], second: dict[str, Any]) -> dic
     二次批改对比（BE-502）：分数差、维度命中率差、问题标签迁移。
     写入第二次报告 payload.comparison，供 FE-502 展示。
     """
-    s1 = float(first.get("total_score") or 0)
-    s2 = float(second.get("total_score") or 0)
+    from app.services.grading_helpers import display_total_score
+
+    s1 = display_total_score(first)
+    s2 = display_total_score(second)
     r1 = _dimension_hit_rate(first)
     r2 = _dimension_hit_rate(second)
 
@@ -92,6 +94,28 @@ def build_retry_comparison(first: dict[str, Any], second: dict[str, Any]) -> dic
         "hit_rate_delta": round(r2 - r1, 1),
         "issue_changes": issue_changes,
     }
+
+
+def find_baseline_report_for_retry(db: Session, submission: Submission) -> Report | None:
+    """重作对比基准：与上一稿报告比（第 2 稿比首稿，第 3 稿比第 2 稿）。"""
+    root_id = submission.parent_submission_id
+    if not root_id:
+        return None
+    prev_attempt = int(submission.attempt or 2) - 1
+    if prev_attempt <= 1:
+        return find_report_for_submission(db, root_id)
+    prev_sub = (
+        db.query(Submission)
+        .filter(
+            Submission.parent_submission_id == root_id,
+            Submission.attempt == prev_attempt,
+        )
+        .order_by(Submission.submitted_at.desc())
+        .first()
+    )
+    if prev_sub:
+        return find_report_for_submission(db, prev_sub.id)
+    return find_report_for_submission(db, root_id)
 
 
 def find_report_for_submission(db: Session, submission_id: str) -> Report | None:
@@ -278,6 +302,16 @@ def get_retry_context(db: Session, user_id: str, report_id: str) -> dict[str, An
         raise ValueError("SUBMISSION_NOT_FOUND")
     question = db.get(Question, submission.question_id)
     payload = report.payload or {}
+    root_id = submission.parent_submission_id or submission.id
+    root = db.get(Submission, root_id) or submission
+    root_report = find_report_for_submission(db, root.id)
+    root_payload = (root_report.payload or {}) if root_report else {}
+    attempt_next = (
+        db.query(Submission)
+        .filter(Submission.user_id == user_id, Submission.parent_submission_id == root_id)
+        .count()
+        + 2
+    )
     custom = bool((submission.user_prompt or "").strip())
     prompt = (submission.user_prompt or (question.prompt if question else "") or "").strip()
     material = submission.user_material if submission.user_material is not None else (question.material if question else None)
@@ -288,9 +322,9 @@ def get_retry_context(db: Session, user_id: str, report_id: str) -> dict[str, An
         "question_title": title,
         "prompt": prompt,
         "reference_material": material,
-        "first_content": submission.content,
-        "first_score": payload.get("total_score"),
+        "first_content": root.content,
+        "first_score": root_payload.get("total_score"),
         "issues": payload.get("issues") or [],
         "suggestions": payload.get("suggestions") or [],
-        "attempt_next": submission.attempt + 1,
+        "attempt_next": attempt_next,
     }

@@ -91,6 +91,7 @@ def build_cache_bundle(
     rubric_candidates: dict[str, Any],
     rubric_merged: dict[str, Any],
     validate_p05: dict[str, Any] | None = None,
+    point_pools: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     bundle: dict[str, Any] = {
         "question_std": question_std,
@@ -100,6 +101,8 @@ def build_cache_bundle(
     }
     if validate_p05:
         bundle["validate_p05"] = validate_p05
+    if point_pools:
+        bundle["point_pools"] = point_pools
     return bundle
 
 

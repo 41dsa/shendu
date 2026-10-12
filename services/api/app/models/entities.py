@@ -51,6 +51,8 @@ class GradingJobStatus(str, enum.Enum):
 class CredentialRole(str, enum.Enum):
     primary = "primary"
     consensus = "consensus"
+    reviewer = "reviewer"
+    embedding = "embedding"
 
 
 class User(Base):
@@ -199,6 +201,50 @@ class GradingAnswerCache(Base):
     answer_hash: Mapped[str] = mapped_column(String(64))
     rubric_version: Mapped[str] = mapped_column(String(16), default="v1")
     report_payload: Mapped[dict] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class EmbeddingVectorCache(Base):
+    """Embedding 向量持久化缓存（按文本 + 模型）。"""
+
+    __tablename__ = "embedding_vector_cache"
+    __table_args__ = (UniqueConstraint("cache_key", name="uq_embedding_vector_cache_key"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    cache_key: Mapped[str] = mapped_column(String(64), index=True)
+    model: Mapped[str] = mapped_column(String(128))
+    vector: Mapped[list[Any]] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ScoringMatchCache(Base):
+    """L3 LLM 语义仲裁结果缓存（采分点语义 + 段落哈希）。"""
+
+    __tablename__ = "scoring_match_cache"
+    __table_args__ = (UniqueConstraint("cache_key", name="uq_scoring_match_cache_key"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    cache_key: Mapped[str] = mapped_column(String(64), index=True)
+    accepted: Mapped[bool] = mapped_column(Boolean, default=False)
+    reason: Mapped[str] = mapped_column(String(512), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ScoringPointHitLog(Base):
+    """评分实践反馈（L4 自进化输入）。"""
+
+    __tablename__ = "scoring_point_hit_logs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    grading_job_id: Mapped[str] = mapped_column(ForeignKey("grading_jobs.id"), index=True)
+    submission_id: Mapped[str] = mapped_column(ForeignKey("submissions.id"), index=True)
+    question_id: Mapped[str] = mapped_column(ForeignKey("questions.id"), index=True)
+    exam_level: Mapped[str] = mapped_column(String(32), default="municipal")
+    point_id: Mapped[str] = mapped_column(String(32), index=True)
+    status: Mapped[str] = mapped_column(String(24))
+    total_score: Mapped[float] = mapped_column(Float, default=0.0)
+    point_pool_version: Mapped[str] = mapped_column(String(16), default="1.0.0")
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 

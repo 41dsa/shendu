@@ -36,8 +36,6 @@ def compute_confidence(
     rule_high = max(1.5, max_score * 0.06)
 
     if consensus_discarded:
-        if rule_gap <= rule_high:
-            return "high"
         return "medium"
 
     if consensus_delta is not None and consensus_delta > 1.5:
@@ -146,6 +144,289 @@ def _issue_rows(payload: dict[str, Any]) -> list[dict[str, Any]]:
     return []
 
 
+_SUMMARY_REVIEW_KEYS = (
+    "总体说明",
+    "总体得分原因",
+    "总体原因",
+    "总体评价",
+    "总体评述",
+)
+
+
+def _summary_review_text(summary: dict[str, Any]) -> str:
+    for key in _SUMMARY_REVIEW_KEYS:
+        val = summary.get(key)
+        if val and str(val).strip():
+            return str(val).strip()
+    return ""
+
+
+def _looks_like_engine_tier_excerpt(text: str) -> bool:
+    t = text.strip()
+    if not t:
+        return False
+    return bool(re.match(r"^[一二三四]类文[（(]", t))
+
+
+def resolve_review_notes_excerpt(payload: dict[str, Any]) -> None:
+    """阅卷总评摘录：优先 LLM 综合评语文本，勿用规则引擎档位说明顶替。"""
+    summary = _payload_section(payload, "综合评分")
+    from_summary = _summary_review_text(summary) if isinstance(summary, dict) else ""
+    existing = str(payload.get("review_notes") or "").strip()
+    tier_note = str(payload.get("tier_label") or payload.get("engine_tier_note") or "").strip()
+
+    if from_summary:
+        if not existing or existing == tier_note or _looks_like_engine_tier_excerpt(existing):
+            payload["review_notes"] = from_summary
+        return
+    if existing and not _looks_like_engine_tier_excerpt(existing):
+        return
+    if _looks_like_engine_tier_excerpt(existing):
+        payload["review_notes"] = ""
+
+
+def display_total_score(payload: dict[str, Any]) -> float:
+    """报告展示用总分（兼容中文键与 total_score=0 的脏数据）。"""
+    normalized = normalize_llm_report_payload(dict(payload))
+    return float(normalized.get("total_score") or 0)
+
+
+def resolved_primary_llm_score(payload: dict[str, Any]) -> float:
+    """与「报告采用」一致的主评展示分（避免综合评分 JSON 与合并总分两套数）。"""
+    total = float(payload.get("total_score") or 0)
+    if total <= 0:
+        total = display_total_score(payload)
+    for key in ("primary_llm_score", "llm_score"):
+        try:
+            val = float(payload.get(key) or 0)
+        except (TypeError, ValueError):
+            continue
+        if val > 0 and (total <= 0 or abs(val - total) <= 2.0):
+            return val
+    if total > 0:
+        return total
+    summary = _payload_section(payload, "综合评分")
+    if isinstance(summary, dict):
+        parsed = _parse_score_value(summary.get("总分"))
+        if parsed is not None and parsed > 0:
+            return parsed
+    return 0.0
+
+
+def _infer_hit_from_earned(earned: float, max_score: float) -> str:
+    return _infer_hit(earned, max_score)
+
+
+_HOLISTIC_DIMENSION_LABELS = frozenset({"总分", "综合评分", "综合得分", "卷面总分", "总分得分"})
+
+
+def _essay_max_from_payload(payload: dict[str, Any], default: float = 40.0) -> float:
+    try:
+        return float(payload.get("max_score") or default)
+    except (TypeError, ValueError):
+        return default
+
+
+def is_holistic_dimension_row(label: str, max_score: float, *, essay_max: float) -> bool:
+    """模型有时把卷面总分写进「分项评分」一行（label=总分、满分=40），会与顶部报告总分重复且不一致。"""
+    lab = (label or "").strip()
+    if not lab:
+        return False
+    if lab in _HOLISTIC_DIMENSION_LABELS:
+        return True
+    if lab.startswith("总分") and max_score >= essay_max * 0.85:
+        return True
+    if lab in ("综合", "整体评价") and max_score >= essay_max * 0.85:
+        return True
+    return False
+
+
+def strip_holistic_dimension_rows(payload: dict[str, Any]) -> None:
+    points = payload.get("scoring_points")
+    if not isinstance(points, list) or not points:
+        return
+    essay_max = _essay_max_from_payload(payload)
+    kept: list[dict[str, Any]] = []
+    stripped = 0
+    for row in points:
+        if not isinstance(row, dict):
+            kept.append(row)
+            continue
+        label = str(row.get("label") or "")
+        mx = _to_float(row.get("max") or row.get("max_score"), 0.0)
+        if is_holistic_dimension_row(label, mx, essay_max=essay_max):
+            stripped += 1
+            reason = str(row.get("reason") or row.get("说明") or "").strip()
+            if reason:
+                existing = str(payload.get("review_notes") or "").strip()
+                if not existing:
+                    payload["review_notes"] = reason
+                elif reason not in existing:
+                    payload["review_notes"] = f"{existing} {reason}".strip()
+            continue
+        kept.append(row)
+    if stripped:
+        payload["scoring_points"] = kept
+        payload["holistic_dimension_stripped"] = True
+
+
+def reconcile_scoring_points_to_total(payload: dict[str, Any], *, tolerance: float = 1.5) -> None:
+    """各维度 earned 加总与 total_score 不一致时，按报告总分等比校准（仅展示层）。"""
+    points = payload.get("scoring_points")
+    if not isinstance(points, list) or not points:
+        return
+    try:
+        total = float(payload.get("total_score") or 0)
+    except (TypeError, ValueError):
+        return
+    if total <= 0:
+        return
+    dim_sum = 0.0
+    for row in points:
+        if isinstance(row, dict):
+            dim_sum += float(row.get("earned") or 0)
+    if dim_sum <= 0 or abs(dim_sum - total) <= tolerance:
+        return
+    scale = total / dim_sum
+    for row in points:
+        if not isinstance(row, dict):
+            continue
+        mx = float(row.get("max") or 0)
+        earned = float(row.get("earned") or 0) * scale
+        if mx > 0:
+            earned = min(mx, earned)
+        row["earned"] = round(earned, 1)
+        row["hit"] = row.get("hit") or _infer_hit_from_earned(row["earned"], mx if mx > 0 else 10.0)
+    payload["dimension_sum_before_reconcile"] = round(dim_sum, 1)
+    payload["score_reconcile_note"] = (
+        f"各维度原始加总约 {round(dim_sum, 1)} 分，已与报告采用总分 {total} 分校准一致。"
+    )
+
+
+def sanitize_evidence_chain(payload: dict[str, Any], *, essay_max: float = 40.0) -> None:
+    """证据链单项分值不应误用整卷满分（避免展示成「总分 29/40」）。"""
+    cap = max(3.0, essay_max * 0.3)
+    chain = payload.get("evidence_chain")
+    if not isinstance(chain, list):
+        return
+    for row in chain:
+        if not isinstance(row, dict):
+            continue
+        try:
+            mx = float(row.get("max") or 0)
+            er = float(row.get("earned") or 0)
+        except (TypeError, ValueError):
+            continue
+        if mx <= 0:
+            continue
+        if mx >= essay_max * 0.45:
+            scale = cap / mx
+            row["max"] = round(cap, 1)
+            row["earned"] = round(min(er * scale, cap), 1)
+        elif mx > cap:
+            row["max"] = round(cap, 1)
+            row["earned"] = round(min(er, cap), 1)
+        else:
+            row["earned"] = round(min(er, mx), 1)
+
+
+def refresh_evidence_chain(payload: dict[str, Any]) -> None:
+    from app.services.scoring_engine.report_adapter import evidence_chain_from_hit_dicts
+
+    eng = payload.get("scoring_engine")
+    if not isinstance(eng, dict):
+        return
+    hits = eng.get("point_hits")
+    if not isinstance(hits, list) or not hits:
+        return
+    rebuilt = evidence_chain_from_hit_dicts(hits)
+    if rebuilt:
+        payload["evidence_chain"] = rebuilt
+
+
+def refresh_scoring_basis_fields(payload: dict[str, Any]) -> None:
+    """同步 scoring_basis 与顶层 rule/llm 分，供「查看评分依据」展示。"""
+    total = display_total_score(payload)
+    if total > 0:
+        payload["total_score"] = total
+
+    primary = resolved_primary_llm_score(payload)
+    if primary > 0:
+        payload["primary_llm_score"] = primary
+        try:
+            llm = float(payload.get("llm_score") or 0)
+        except (TypeError, ValueError):
+            llm = 0.0
+        if llm <= 0:
+            payload["llm_score"] = primary
+
+    try:
+        rule = float(payload.get("rule_score") or payload.get("deterministic_score") or 0)
+    except (TypeError, ValueError):
+        rule = 0.0
+    payload["rule_score"] = rule
+
+    stored = dict(payload.get("scoring_basis") or {})
+    stored["rule_score"] = rule
+    if primary > 0:
+        stored["primary_llm_score"] = primary
+        stored["llm_score"] = payload.get("llm_score", primary)
+    for key in (
+        "consensus_scores",
+        "consensus_delta",
+        "consensus_discarded",
+        "consensus_rate",
+        "confidence",
+        "confidence_note",
+        "confidence_scope",
+        "evidence_chain",
+        "engine_total_discarded",
+        "score_confidence_declaration",
+        "standard_version",
+        "exam_standard_version",
+        "grading_standard_mode",
+        "scoring_points_rubric",
+    ):
+        if payload.get(key) is not None:
+            stored[key] = payload.get(key)
+        elif stored.get(key) is not None:
+            payload[key] = stored[key]
+    payload["scoring_basis"] = stored
+    refresh_evidence_chain(payload)
+    try:
+        essay_max = float(payload.get("max_score") or 40)
+    except (TypeError, ValueError):
+        essay_max = 40.0
+    strip_holistic_dimension_rows(payload)
+    reconcile_scoring_points_to_total(payload)
+    sanitize_evidence_chain(payload, essay_max=essay_max)
+    if primary > 0:
+        payload["primary_llm_score"] = primary
+        payload["llm_score"] = payload.get("llm_score") or primary
+        stored["primary_llm_score"] = primary
+        stored["llm_score"] = payload["llm_score"]
+        payload["scoring_basis"] = stored
+
+
+def refresh_retry_comparison_scores(
+    payload: dict[str, Any],
+    *,
+    baseline_payload: dict[str, Any] | None = None,
+) -> None:
+    """重作对比中的分数与涨幅与当前解析后的总分对齐。"""
+    comp = payload.get("comparison")
+    if not isinstance(comp, dict):
+        return
+    second = display_total_score(payload)
+    if baseline_payload is not None:
+        first = display_total_score(baseline_payload)
+        comp["first_score"] = first
+    else:
+        first = float(comp.get("first_score") or 0)
+    comp["second_score"] = second
+    comp["score_delta"] = round(second - first, 1)
+
+
 def normalize_llm_report_payload(raw: dict[str, Any]) -> dict[str, Any]:
     """
     将模型返回的非标准 JSON（常见中文键、兼容模式）映射为报告页使用的英文字段。
@@ -153,10 +434,16 @@ def normalize_llm_report_payload(raw: dict[str, Any]) -> dict[str, Any]:
     """
     payload = dict(raw)
     summary = _payload_section(payload, "综合评分")
-    if payload.get("total_score") is None and isinstance(summary, dict):
+    if isinstance(summary, dict):
         parsed = _parse_score_value(summary.get("总分"))
         if parsed is not None and parsed >= 0:
-            payload["total_score"] = parsed
+            current = payload.get("total_score")
+            try:
+                current_num = float(current) if current is not None else None
+            except (TypeError, ValueError):
+                current_num = None
+            if current_num is None or (current_num <= 0 and parsed > 0):
+                payload["total_score"] = parsed
 
     section_scores = _payload_section(payload, "分项评分", "dimensions")
     if not payload.get("scoring_points"):
@@ -164,10 +451,13 @@ def normalize_llm_report_payload(raw: dict[str, Any]) -> dict[str, Any]:
         if not rows and isinstance(section_scores, list):
             rows = _dimension_rows(section_scores)
         points: list[dict[str, Any]] = []
+        essay_max = _essay_max_from_payload(payload)
         for i, row in enumerate(rows):
             earned = _to_float(row.get("earned") or row.get("得分") or row.get("score"))
             mx = _to_float(row.get("max") or row.get("满分") or row.get("max_score"), 10.0)
             label = row.get("label") or row.get("评分维度") or row.get("name") or f"维度{i + 1}"
+            if is_holistic_dimension_row(str(label), mx, essay_max=essay_max) and len(rows) > 1:
+                continue
             points.append(
                 {
                     "id": row.get("id") or f"D{i + 1:02d}",
@@ -215,8 +505,12 @@ def normalize_llm_report_payload(raw: dict[str, Any]) -> dict[str, Any]:
                 suggestions.append(str(fix))
         payload["suggestions"] = suggestions[:8]
 
-    if not payload.get("review_notes") and isinstance(summary, dict):
-        payload["review_notes"] = str(summary.get("总体得分原因") or summary.get("总体原因") or "")
+    if isinstance(summary, dict):
+        excerpt = _summary_review_text(summary)
+        if excerpt and not payload.get("review_notes"):
+            payload["review_notes"] = excerpt
+
+    resolve_review_notes_excerpt(payload)
 
     for issue in payload.get("issues") or []:
         if not isinstance(issue, dict):
@@ -250,5 +544,6 @@ def build_scoring_basis(payload: dict[str, Any], question: dict[str, Any]) -> di
         "confidence_note": payload.get("confidence_note"),
         "confidence_scope": payload.get("confidence_scope"),
         "evidence_chain": payload.get("evidence_chain"),
+        "engine_total_discarded": payload.get("engine_total_discarded"),
         "score_confidence_declaration": (payload.get("essay_meta") or {}).get("score_confidence_declaration"),
     }

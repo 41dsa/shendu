@@ -34,6 +34,8 @@ class EssayGradingContext:
     standard_version: int | None = None
     exam_policy: dict[str, Any] | None = None
     exam_standard_version: int | None = None
+    question_id: str = ""
+    point_pools: dict[str, Any] | None = None
 
 
 def resolve_essay_context(
@@ -61,6 +63,7 @@ def resolve_essay_context(
     standard_version: int | None = None
     exam_policy: dict[str, Any] | None = None
     exam_standard_version: int | None = None
+    point_pools: dict[str, Any] | None = None
     active: dict[str, Any] | None = None
     if custom and db is not None:
         active = get_cached_custom_payload(db, submission, question)
@@ -79,6 +82,9 @@ def resolve_essay_context(
         score_confidence_declaration = rules.get("score_confidence_declaration")
         meta = active.get("_meta") or {}
         standard_version = meta.get("version")
+        from app.services.scoring_engine.pool_loader import point_pools_from_payload
+
+        point_pools = point_pools_from_payload(active)
     elif custom or question.id == USER_ESSAY_QUESTION_ID:
         scoring = DEFAULT_RUBRIC_DIMENSIONS
 
@@ -117,6 +123,8 @@ def resolve_essay_context(
         standard_version=standard_version,
         exam_policy=exam_policy,
         exam_standard_version=exam_standard_version,
+        question_id=question.id,
+        point_pools=point_pools,
     )
 
 

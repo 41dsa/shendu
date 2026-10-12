@@ -65,6 +65,7 @@ def assemble_payload_from_job(db: Session, job: StandardGenerationJob) -> dict[s
         "material_analysis": _latest_step_payload(db, job.id, "material_analysis"),
         "rubric_standard": _latest_step_payload(db, job.id, "rubric_merged"),
         "loss_rules": (_latest_step_payload(db, job.id, "loss_rules") or {}).get("rules") or [],
+        "point_pools": _latest_step_payload(db, job.id, "point_pool_build") or {},
     }
 
 

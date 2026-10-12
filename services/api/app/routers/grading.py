@@ -1,10 +1,14 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
+
+from app.services.ai_client import AiCallError
+from app.services.rewrite_demo_service import generate_rewrite_demo_for_report, refresh_rewrite_demo_display
 from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.database import get_db
 from app.deps import get_active_license, get_current_user
 from app.models.entities import GradingJob, GradingJobStatus, License, Question, Report, Submission, User
+from app.services.coach_service import find_baseline_report_for_retry
 from app.domain.essay import USER_ESSAY_QUESTION_ID
 from app.schemas.grading import (
     GradingJobListItem,
@@ -13,8 +17,15 @@ from app.schemas.grading import (
     GradingQueueResponse,
     ReportListItem,
     ReportResponse,
+    ReportSubmissionSnapshot,
+    RewriteDemoResponse,
 )
-from app.services.grading_helpers import normalize_llm_report_payload
+from app.services.grading_helpers import (
+    build_scoring_basis,
+    normalize_llm_report_payload,
+    refresh_retry_comparison_scores,
+    refresh_scoring_basis_fields,
+)
 from app.services.grading_limits import reconcile_stale_grading_jobs
 
 router = APIRouter(tags=["grading"])
@@ -154,7 +165,95 @@ def get_report(
     if not report or report.user_id != user.id:
         raise HTTPException(status_code=404, detail="报告不存在")
     payload = normalize_llm_report_payload(dict(report.payload or {}))
-    return ReportResponse(id=report.id, payload=payload)
+    baseline_payload: dict | None = None
+    job = db.get(GradingJob, report.grading_job_id)
+    submission = db.get(Submission, job.submission_id) if job else None
+    if submission and submission.parent_submission_id:
+        baseline_report = find_baseline_report_for_retry(db, submission)
+        if baseline_report and baseline_report.user_id == user.id and baseline_report.payload:
+            baseline_payload = normalize_llm_report_payload(dict(baseline_report.payload))
+            payload["parent_report_id"] = baseline_report.id
+    elif payload.get("parent_report_id"):
+        parent = db.get(Report, str(payload["parent_report_id"]))
+        if parent and parent.user_id == user.id and parent.payload:
+            baseline_payload = normalize_llm_report_payload(dict(parent.payload))
+    refresh_retry_comparison_scores(payload, baseline_payload=baseline_payload)
+    refresh_scoring_basis_fields(payload)
+    rewrite_block = payload.get("rewrite_demo")
+    if isinstance(rewrite_block, dict) and submission and (submission.content or "").strip():
+        refresh_rewrite_demo_display(
+            rewrite_block,
+            submission.content or "",
+            report_payload=payload,
+        )
+    submission_snap = None
+    if submission:
+        submission_snap = ReportSubmissionSnapshot(
+            content=submission.content or "",
+            user_prompt=submission.user_prompt,
+            user_material=submission.user_material,
+        )
+    return ReportResponse(id=report.id, payload=payload, submission=submission_snap)
+
+
+def _submission_for_report(db: Session, report: Report) -> Submission | None:
+    job = db.get(GradingJob, report.grading_job_id)
+    if not job:
+        return None
+    return db.get(Submission, job.submission_id)
+
+
+@router.post("/reports/{report_id}/rewrite-demo", response_model=RewriteDemoResponse)
+async def create_report_rewrite_demo(
+    report_id: str,
+    user: User = Depends(get_current_user),
+    _lic: License = Depends(get_active_license),
+    db: Session = Depends(get_db),
+) -> RewriteDemoResponse:
+    report = db.get(Report, report_id)
+    if not report or report.user_id != user.id:
+        raise HTTPException(status_code=404, detail="报告不存在")
+
+    payload = normalize_llm_report_payload(dict(report.payload or {}))
+    existing = payload.get("rewrite_demo")
+    if (
+        isinstance(existing, dict)
+        and existing.get("status") == "ready"
+        and existing.get("rewrite_text")
+        and int(existing.get("schema_version") or 1) >= 13
+        and isinstance(existing.get("edit_spans"), list)
+        and len(existing.get("edit_spans") or []) > 0
+    ):
+        refresh_scoring_basis_fields(payload)
+        return RewriteDemoResponse(report_id=report.id, rewrite_demo=existing, payload=payload)
+
+    submission = _submission_for_report(db, report)
+    if not submission or not (submission.content or "").strip():
+        raise HTTPException(status_code=400, detail="找不到作答正文")
+
+    question = db.get(Question, submission.question_id)
+    try:
+        demo = await generate_rewrite_demo_for_report(
+            db,
+            report=report,
+            submission=submission,
+            question=question,
+            payload=payload,
+        )
+    except ValueError as exc:
+        code = str(exc)
+        if code == "REFERENCE_ONLY":
+            raise HTTPException(status_code=400, detail="本次为参考模式，暂不提供改写范例") from exc
+        raise HTTPException(status_code=400, detail="作答过短，无法生成改写范例") from exc
+    except AiCallError as exc:
+        raise HTTPException(status_code=502, detail=f"{exc.code}: {exc}") from exc
+
+    payload["rewrite_demo"] = demo
+    report.payload = payload
+    db.add(report)
+    db.commit()
+    refresh_scoring_basis_fields(payload)
+    return RewriteDemoResponse(report_id=report.id, rewrite_demo=demo, payload=payload)
 
 
 @router.get("/reports/{report_id}/basis")
@@ -167,5 +266,23 @@ def get_report_basis(
     report = db.get(Report, report_id)
     if not report or report.user_id != user.id:
         raise HTTPException(status_code=404, detail="报告不存在")
-    basis = report.payload.get("scoring_basis") or report.payload
+    payload = normalize_llm_report_payload(dict(report.payload or {}))
+    baseline_payload: dict | None = None
+    job = db.get(GradingJob, report.grading_job_id)
+    submission = db.get(Submission, job.submission_id) if job else None
+    if submission and submission.parent_submission_id:
+        baseline_report = find_baseline_report_for_retry(db, submission)
+        if baseline_report and baseline_report.user_id == user.id and baseline_report.payload:
+            baseline_payload = normalize_llm_report_payload(dict(baseline_report.payload))
+    refresh_retry_comparison_scores(payload, baseline_payload=baseline_payload)
+    refresh_scoring_basis_fields(payload)
+    stored = payload.get("scoring_basis") or {}
+    rubric = stored.get("scoring_points_rubric") if isinstance(stored, dict) else None
+    basis = build_scoring_basis(
+        payload,
+        {
+            "scoring_points": rubric or [],
+            "max_score": payload.get("max_score") or 40,
+        },
+    )
     return {"report_id": report.id, "basis": basis}

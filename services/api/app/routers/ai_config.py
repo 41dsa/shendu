@@ -16,7 +16,12 @@ def list_credentials(user: User = Depends(get_current_user), db: Session = Depen
     rows = db.query(UserProviderCredential).filter(UserProviderCredential.user_id == user.id).all()
     by_role = {r.role: r for r in rows}
     result: list[AiCredentialView] = []
-    for role in (CredentialRole.primary, CredentialRole.consensus):
+    for role in (
+        CredentialRole.primary,
+        CredentialRole.consensus,
+        CredentialRole.reviewer,
+        CredentialRole.embedding,
+    ):
         row = by_role.get(role)
         if not row:
             result.append(
@@ -87,6 +92,39 @@ def upsert_credential(
         api_key_masked=masked,
         configured=True,
     )
+
+
+@router.post("/test-embedding")
+async def test_embedding(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    from app.services.embedding_service import fetch_embeddings_http, resolve_embedding_api
+
+    try:
+        resolved = resolve_embedding_api(db, user.id)
+    except AiCallError as exc:
+        raise HTTPException(status_code=400, detail={"code": exc.code, "message": str(exc)}) from exc
+    if not resolved:
+        return {
+            "ok": False,
+            "message": (
+                "请先在下方「Embedding 模型」保存 OpenAI 兼容的 Base URL、embedding 模型名与 Key。"
+                "Embedding 与主模型相互独立，可不同厂商；未配置时无法做 L2 语义匹配。"
+            ),
+        }
+    url, model, api_key = resolved
+    try:
+        vecs = await fetch_embeddings_http(
+            url=url,
+            api_key=api_key,
+            model=model,
+            texts=["申论大作文语义向量连通性测试"],
+        )
+        dim = len(vecs[0]) if vecs else 0
+        return {"ok": True, "model": model, "dimensions": dim, "url": url}
+    except AiCallError as exc:
+        raise HTTPException(status_code=400, detail={"code": exc.code, "message": str(exc)}) from exc
 
 
 @router.post("/test-connection")

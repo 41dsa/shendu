@@ -264,7 +264,7 @@ export default function GradingPage() {
           type="info"
           showIcon
           message="请先配置 AI Key"
-          description="激活后需在「AI 设置」中填写 DeepSeek 或 OpenAI 兼容 API Key，才能提交批改。"
+          description="激活后需在「AI 设置」中配置主模型（OpenAI 兼容 Chat API 的 Base、模型名与 Key），才能提交批改。"
           action={
             <Button size="small" type="primary">
               <Link to="/settings/ai">去配置</Link>

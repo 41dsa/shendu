@@ -5,7 +5,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.services.grading_helpers import normalize_llm_report_payload
+from app.services.grading_helpers import normalize_llm_report_payload, refresh_scoring_basis_fields
 
 
 def test_chinese_keys() -> None:
@@ -46,6 +46,33 @@ def test_numbered_chinese_keys() -> None:
     print("ok: numbered chinese keys normalized")
 
 
+def test_strip_holistic_dimension_row() -> None:
+    raw = {
+        "total_score": 17.4,
+        "max_score": 40,
+        "scoring_points": [
+            {
+                "label": "总分",
+                "earned": 8.7,
+                "max": 40,
+                "hit": "partial",
+                "reason": "三类文，立意与材料结合、论证是主要短板。",
+            },
+            {"label": "立意与观点", "earned": 4, "max": 10, "hit": "partial"},
+            {"label": "结构与层次", "earned": 4, "max": 10, "hit": "partial"},
+        ],
+        "review_notes": "",
+    }
+    refresh_scoring_basis_fields(raw)
+    labels = [p["label"] for p in raw["scoring_points"]]
+    assert "总分" not in labels
+    assert "三类文" in raw["review_notes"]
+    dim_sum = sum(p["earned"] for p in raw["scoring_points"])
+    assert abs(dim_sum - 17.4) <= 1.5
+    print("ok: holistic 总分 row stripped and dimensions reconciled")
+
+
 if __name__ == "__main__":
     test_chinese_keys()
     test_numbered_chinese_keys()
+    test_strip_holistic_dimension_row()

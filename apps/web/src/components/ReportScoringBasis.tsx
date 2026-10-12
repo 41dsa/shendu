@@ -23,6 +23,18 @@ type Props = {
 const CONF_ZH: Record<string, string> = { high: "高", medium: "中", low: "参考" };
 const CONF_COLOR: Record<string, string> = { high: "green", medium: "blue", low: "gold" };
 
+/** 考试标准引擎 scoring_rules.score_confidence_declaration */
+const SCORE_DECL_ZH: Record<string, string> = {
+  high: "较高",
+  medium: "中等",
+  low: "仅供参考",
+};
+
+function scoreConfidenceDeclarationLabel(raw: string): string {
+  const key = raw.trim().toLowerCase();
+  return SCORE_DECL_ZH[key] ?? raw;
+}
+
 const MODE_ZH: Record<string, string> = {
   published: "本题已发布的考试标准（考试标准引擎）",
   custom_engine: "根据你的题干与材料现场生成的评分标准（考试标准引擎 · 自备题）",
@@ -48,8 +60,24 @@ export default function ReportScoringBasis({
   consensusDiscarded = false,
 }: Props) {
   const ruleScore = basis.rule_score;
-  const primaryLlm = basis.primary_llm_score ?? basis.llm_score ?? totalScore;
-  const finalLlm = basis.llm_score ?? totalScore;
+  const totalNum = Number(totalScore);
+  const basisPrimary = basis.primary_llm_score ?? basis.llm_score;
+  const primaryNum = Number(basisPrimary);
+  const primaryLlm =
+    Number.isFinite(primaryNum) && primaryNum > 0
+      ? basisPrimary
+      : Number.isFinite(totalNum) && totalNum > 0
+        ? totalScore
+        : basisPrimary ?? totalScore;
+  const basisFinal = basis.llm_score;
+  const basisFinalNum = Number(basisFinal);
+  const finalLlm =
+    Number.isFinite(basisFinalNum) && basisFinalNum > 0
+      ? basisFinal
+      : Number.isFinite(totalNum) && totalNum > 0
+        ? totalScore
+        : basisFinal ?? totalScore;
+  const engineDiscarded = Boolean(basis.engine_total_discarded);
   const consensus = (basis.consensus_scores as number[] | undefined) ?? [];
   const consensusDelta = basis.consensus_delta as number | null | undefined;
   const discarded = consensusDiscarded || Boolean(basis.consensus_discarded);
@@ -110,7 +138,9 @@ export default function ReportScoringBasis({
           <Descriptions.Item label="规则预评">
             {fmtScore(ruleScore)} 分
             <Typography.Text type="secondary" style={{ marginLeft: 8 }}>
-              按字数、结构与维度做的程序估算，用于校验 AI 结果
+              {engineDiscarded && Number(ruleScore) <= 0
+                ? "本次要点匹配不足，未产生有效规则分；报告总分以完整批改主评为准"
+                : "按字数、结构与维度做的程序估算，用于校验 AI 结果"}
             </Typography.Text>
           </Descriptions.Item>
           <Descriptions.Item label="AI 批改总分">{fmtScore(primaryLlm)} 分</Descriptions.Item>
@@ -130,7 +160,11 @@ export default function ReportScoringBasis({
           </Descriptions.Item>
           {discarded ? (
             <Descriptions.Item label="质量校验">
-              内部分歧较大，已仅保留完整批改结果，不向学员展示第二路分数。
+              双路总分差距较大，报告采用主评/合并结果
+              {basis.consensus_review_score != null
+                ? `（复核分 ${fmtScore(basis.consensus_review_score)} 未采用）`
+                : ""}
+              。
             </Descriptions.Item>
           ) : consensus.length >= 2 ? (
             <Descriptions.Item label="轻量复核">
@@ -188,30 +222,40 @@ export default function ReportScoringBasis({
             size="small"
             style={{ marginTop: 8 }}
             dataSource={evidenceChain.slice(0, 5)}
-            renderItem={(row, i) => (
+            renderItem={(row, i) => {
+              const max = Number(row.max);
+              const earnedRaw = Number(row.earned);
+              const earned =
+                Number.isFinite(max) && max > 0 && Number.isFinite(earnedRaw)
+                  ? Math.min(earnedRaw, max)
+                  : row.earned;
+              return (
               <List.Item>
                 <Space direction="vertical" size={2} style={{ width: "100%" }}>
                   <Typography.Text>
                     {row.label ?? row.criterion_id ?? `要点 ${i + 1}`}
                     {row.hit ? ` · ${row.hit === "full" ? "命中" : row.hit === "partial" ? "部分命中" : "未命中"}` : ""}
-                    {row.earned != null && row.max != null ? ` · ${row.earned}/${row.max} 分` : ""}
+                    {earned != null && row.max != null ? ` · 要点 ${earned}/${row.max} 分` : ""}
                   </Typography.Text>
                   {row.user_quote ? (
                     <Typography.Text type="secondary">你的表述：{row.user_quote}</Typography.Text>
                   ) : null}
                   {row.material_ref ? (
-                    <Typography.Text type="secondary">材料依据：{row.material_ref}</Typography.Text>
+                    <Typography.Text type="secondary">作文定位：{row.material_ref}</Typography.Text>
                   ) : null}
                   {row.reason ? <Typography.Text type="secondary">{row.reason}</Typography.Text> : null}
                 </Space>
               </List.Item>
-            )}
+            );
+            }}
           />
         </div>
       ) : null}
 
       {scoreDecl ? (
-        <Typography.Text type="secondary">标准分值说明：{scoreDecl}（非官方阅卷尺度）</Typography.Text>
+        <Typography.Text type="secondary">
+          标准分值说明：{scoreConfidenceDeclarationLabel(scoreDecl)}（非官方阅卷尺度）
+        </Typography.Text>
       ) : null}
 
       {reviewNotes ? (

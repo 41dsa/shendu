@@ -1,7 +1,7 @@
 import { Alert, Button, Card, Input, List, Space, Tag, Typography, message } from "antd";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { useNavigate, useParams, useLocation } from "react-router-dom";
 import { api } from "../api/client";
 import { issueAnalysisText, issueBadgeText } from "../utils/issueDisplay";
 import { issueTypeTagStyle, severityLabel, severityVisual } from "../utils/severityLabel";
@@ -22,11 +22,17 @@ type RetryContext = {
 export default function RetryAnswerPage() {
   const { reportId } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const [answer, setAnswer] = useState("");
 
+  useEffect(() => {
+    setAnswer("");
+  }, [reportId, location.key]);
+
   const { data, isLoading } = useQuery({
-    queryKey: ["retry-context", reportId],
+    queryKey: ["retry-context", reportId, location.key],
     enabled: !!reportId,
+    refetchOnMount: "always",
     queryFn: () => api<RetryContext>(`/coach/reports/${reportId}/retry-context`),
   });
 
@@ -37,7 +43,7 @@ export default function RetryAnswerPage() {
         body: JSON.stringify({ content: answer }),
       }),
     onSuccess: (res) => {
-      message.success("已提交第二次批改");
+      message.success("已提交批改");
       navigate(`/grading?job=${res.grading_job_id}`);
     },
     onError: (e) => message.error(String(e)),
@@ -49,11 +55,11 @@ export default function RetryAnswerPage() {
 
   return (
     <Space direction="vertical" size="large" style={{ width: "100%" }}>
-      <Card title={`二次作答 · ${data.question_title}`} extra={<Tag>第 {data.attempt_next} 稿</Tag>}>
+      <Card title={`重新作答 · ${data.question_title}`} extra={<Tag>第 {data.attempt_next} 稿</Tag>}>
         <Alert
           type="info"
           showIcon
-          message={`首次得分 ${data.first_score ?? "—"}，请针对下列问题修改后重写全文`}
+          message={`首稿得分 ${data.first_score ?? "—"}，请针对下列问题修改后重写全文`}
           style={{ marginBottom: 16 }}
         />
         <Typography.Title level={5}>题干</Typography.Title>
@@ -70,7 +76,7 @@ export default function RetryAnswerPage() {
         ) : null}
       </Card>
 
-      <Card title="首次主要问题">
+      <Card title="待改进问题（基于当前报告）">
         <List
           size="small"
           dataSource={data.issues}
@@ -97,21 +103,19 @@ export default function RetryAnswerPage() {
         )}
       </Card>
 
-      <Card title="第一次原文（只读）">
+      <Card title="首稿原文（只读）">
         <Typography.Paragraph style={{ whiteSpace: "pre-wrap", maxHeight: 200, overflow: "auto" }}>
           {data.first_content}
         </Typography.Paragraph>
       </Card>
 
-      <Card title="第二次作文">
+      <Card title={`第 ${data.attempt_next} 稿作文`}>
         <Input.TextArea rows={16} value={answer} onChange={(e) => setAnswer(e.target.value)} placeholder="在此撰写修改后的完整大作文…" />
         <Space style={{ marginTop: 16 }}>
           <Button type="primary" loading={submit.isPending} onClick={() => submit.mutate()} disabled={answer.trim().length < 10}>
             提交批改
           </Button>
-          <Button>
-            <Link to={`/reports/${reportId}`}>返回报告</Link>
-          </Button>
+          <Button onClick={() => navigate(`/reports/${reportId}`)}>返回报告</Button>
         </Space>
       </Card>
     </Space>

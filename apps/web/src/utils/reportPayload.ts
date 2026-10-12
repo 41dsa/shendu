@@ -7,7 +7,7 @@ function toNum(v: unknown, fallback = 0): number {
   return Number.isFinite(n) ? n : fallback;
 }
 
-function parseScoreValue(v: unknown): number | null {
+export function parseScoreValue(v: unknown): number | null {
   if (v == null) return null;
   if (typeof v === "number" && Number.isFinite(v)) return v;
   if (typeof v === "string") {
@@ -62,25 +62,72 @@ function inferHit(earned: number, max: number): string {
   return "miss";
 }
 
+const HOLISTIC_LABELS = new Set(["总分", "综合评分", "综合得分", "卷面总分", "总分得分"]);
+
+function isHolisticDimensionRow(label: string, max: number, essayMax: number): boolean {
+  const lab = label.trim();
+  if (!lab) return false;
+  if (HOLISTIC_LABELS.has(lab)) return true;
+  if (lab.startsWith("总分") && max >= essayMax * 0.85) return true;
+  return false;
+}
+
+function stripHolisticDimensionRows(p: Raw): void {
+  const pts = p.scoring_points;
+  if (!Array.isArray(pts) || pts.length === 0) return;
+  const essayMax = toNum(p.max_score, 40);
+  const kept: Raw[] = [];
+  let stripped = 0;
+  for (const row of pts) {
+    if (!row || typeof row !== "object") {
+      kept.push(row as Raw);
+      continue;
+    }
+    const label = String(row.label ?? "");
+    const mx = toNum(row.max, 0);
+    if (isHolisticDimensionRow(label, mx, essayMax)) {
+      stripped += 1;
+      const reason = String(row.reason ?? "").trim();
+      if (reason) {
+        const existing = p.review_notes != null ? String(p.review_notes).trim() : "";
+        if (!existing) p.review_notes = reason;
+        else if (!existing.includes(reason)) p.review_notes = `${existing} ${reason}`.trim();
+      }
+      continue;
+    }
+    kept.push(row as Raw);
+  }
+  if (stripped > 0) p.scoring_points = kept;
+}
+
 export function normalizeReportPayload(raw: Raw): Raw {
   const p = { ...raw };
 
   const summary = payloadSection(p, "综合评分") as Raw | undefined;
-  if (p.total_score == null && summary && summary.总分 != null) {
+  if (summary && summary.总分 != null) {
     const parsed = parseScoreValue(summary.总分);
-    if (parsed != null) p.total_score = parsed;
+    const current = p.total_score == null ? null : Number(p.total_score);
+    if (
+      parsed != null &&
+      (current == null || !Number.isFinite(current) || (current <= 0 && parsed > 0))
+    ) {
+      p.total_score = parsed;
+    }
   }
 
   if (!Array.isArray(p.scoring_points) || p.scoring_points.length === 0) {
     const section = payloadSection(p, "分项评分", "dimensions");
     const rows = dimensionRows(section);
     const points: Raw[] = [];
+    const essayMax = toNum(p.max_score, 40);
     rows.forEach((r, i) => {
       const earned = toNum(r.earned ?? r.得分 ?? r.score);
       const max = toNum(r.max ?? r.满分 ?? r.max_score, 10);
+      const label = String(r.label ?? r.评分维度 ?? r.name ?? `维度${i + 1}`);
+      if (isHolisticDimensionRow(label, max, essayMax) && rows.length > 1) return;
       points.push({
         id: r.id ?? `D${String(i + 1).padStart(2, "0")}`,
-        label: r.label ?? r.评分维度 ?? r.name ?? `维度${i + 1}`,
+        label,
         earned,
         max,
         hit: r.hit ?? inferHit(earned, max),
@@ -89,6 +136,8 @@ export function normalizeReportPayload(raw: Raw): Raw {
     });
     p.scoring_points = points;
   }
+
+  stripHolisticDimensionRows(p);
 
   if (!Array.isArray(p.issues) || p.issues.length === 0) {
     const issues: Raw[] = [];
@@ -109,6 +158,26 @@ export function normalizeReportPayload(raw: Raw): Raw {
         });
       });
     p.issues = issues;
+  }
+
+  const summaryReviewKeys = ["总体说明", "总体得分原因", "总体原因", "总体评价", "总体评述"] as const;
+  if (summary && typeof summary === "object") {
+    const s = summary as Raw;
+    let excerpt = "";
+    for (const key of summaryReviewKeys) {
+      const val = s[key];
+      if (val != null && String(val).trim()) {
+        excerpt = String(val).trim();
+        break;
+      }
+    }
+    const existing = p.review_notes != null ? String(p.review_notes).trim() : "";
+    const tierLike = /^[一二三四]类文[（(]/.test(existing);
+    if (excerpt && (!existing || tierLike)) {
+      p.review_notes = excerpt;
+    } else if (tierLike && !excerpt) {
+      p.review_notes = "";
+    }
   }
 
   if (!Array.isArray(p.suggestions) || p.suggestions.length === 0) {
@@ -132,4 +201,30 @@ export function normalizeReportPayload(raw: Raw): Raw {
   }
 
   return p;
+}
+
+/** 与后端 display_total_score 对齐 */
+export function displayTotalScore(raw: Raw): number | null {
+  const p = normalizeReportPayload({ ...raw });
+  return parseScoreValue(p.total_score);
+}
+
+export function refreshComparisonScores(
+  payload: Raw,
+  baselinePayload?: Raw | null,
+): Raw {
+  const comp = payload.comparison;
+  if (!comp || typeof comp !== "object") return payload;
+  const comparison = { ...(comp as Raw) };
+  const second = displayTotalScore(payload);
+  const first =
+    baselinePayload != null
+      ? displayTotalScore(baselinePayload)
+      : parseScoreValue(comparison.first_score);
+  if (second != null) comparison.second_score = second;
+  if (first != null) comparison.first_score = first;
+  if (second != null && first != null) {
+    comparison.score_delta = Math.round((second - first) * 10) / 10;
+  }
+  return { ...payload, comparison };
 }

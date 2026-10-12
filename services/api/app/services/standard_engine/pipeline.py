@@ -46,6 +46,12 @@ from app.services.standard_engine.stub_generate import (
     stub_question_standard,
     stub_rubric_standard,
 )
+from app.config import settings
+from app.services.point_pool_pipeline.build import (
+    build_point_pool_bundle,
+    build_point_pool_bundle_sync_stub,
+    bundle_to_payload_dict,
+)
 
 STANDARD_PIPELINE_STEPS = [
     "ingest",
@@ -56,6 +62,7 @@ STANDARD_PIPELINE_STEPS = [
     "rubric_merged",
     "loss_rules",
     "validate_p05",
+    "point_pool_build",
     "validate",
     "publish",
 ]
@@ -205,6 +212,38 @@ async def _run_pipeline_async(db: Session, job_id: str) -> None:
     append_job_step(db, job, "loss_rules", {"rules": [r.model_dump() for r in loss]})
 
     rubric_dict = rubric.model_dump()
+    point_pools_payload: dict[str, Any] = {}
+    if served_from_cache and cache_row and cache_row.bundle.get("point_pools"):
+        point_pools_payload = dict(cache_row.bundle.get("point_pools") or {})
+        append_job_step(db, job, "point_pool_build", {**point_pools_payload, "cache_hit": True}, detail="cache_hit")
+    elif settings.point_pool_pipeline_enabled:
+        themes = list(getattr(mat, "themes", None) or (mat.model_dump().get("themes") if mat else []) or [])
+        focus_pts = list(q_std.focus_points or [])
+        criteria_dicts = [c.model_dump() for c in rubric.criteria]
+        if use_llm and cred:
+            pp_bundle = await build_point_pool_bundle(
+                db,
+                question_id=job.question_id,
+                prompt=essay.prompt,
+                material=question.material,
+                rubric_criteria=criteria_dicts,
+                focus_points=focus_pts,
+                themes=themes,
+                reference_excerpts=doc_excerpts,
+                user_id=user_id,
+                job_id=job.id,
+            )
+        else:
+            pp_bundle = build_point_pool_bundle_sync_stub(
+                question_id=job.question_id,
+                prompt=essay.prompt,
+                material=question.material,
+                rubric_criteria=criteria_dicts,
+                focus_points=focus_pts,
+                themes=themes,
+            )
+        point_pools_payload = bundle_to_payload_dict(pp_bundle)
+        append_job_step(db, job, "point_pool_build", point_pools_payload)
     use_p05 = os.environ.get("STANDARD_USE_P05", "1").lower() not in ("0", "false", "no")
     ref_ratio: float
     p05_payload: dict[str, Any] | None = None
@@ -309,6 +348,7 @@ async def _run_pipeline_async(db: Session, job_id: str) -> None:
                 rubric_candidates=rubric_candidates_payload,
                 rubric_merged=rubric.model_dump(),
                 validate_p05=p05_payload,
+                point_pools=point_pools_payload or None,
             ),
         )
     job.finished_at = datetime.now(UTC)

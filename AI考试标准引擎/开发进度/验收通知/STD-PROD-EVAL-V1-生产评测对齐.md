@@ -11,9 +11,10 @@
 1. **产品定位文档**：七模块映射、三阶段路线、与现网差距说明  
 2. **① 试题解析**：标准任务 `structured` 步含 `parse`（考试/卷种/字数/能力）  
 3. **③ 验证增强**：准则 `usage_band`、区间分校验、验证步 `criterion_confidence_tiers`、发布后 enriched rubric  
-4. **⑤ 证据链**：批改输出 `evidence_chain`；报告「评分依据」展示（有则显示）  
-5. **⑥ 校准导出**：`scripts/export_calibration_dataset.py`（金标 + 争议）  
-6. **契约扩展**：`RubricCriterionSchema` 增加 `score_min`/`score_max`/`usage_band`  
+4. **④ 分层评分引擎**：`domain/scoring_engine` + `services/scoring_engine`；`grading_service` 以确定性总分为脊柱融合 LLM  
+5. **⑤ 证据链**：批改输出 `evidence_chain`；报告「评分依据」展示（有则显示）  
+6. **⑥ 校准导出**：`scripts/export_calibration_dataset.py`（金标 + 争议）  
+7. **契约扩展**：`RubricCriterionSchema` 增加 `score_min`/`score_max`/`usage_band`  
 
 ## 验收步骤
 
@@ -22,6 +23,7 @@
 ```bash
 cd services/api && source .venv/bin/activate
 python scripts/verify_prod_eval_alignment.py
+python scripts/verify_scoring_engine.py
 python scripts/verify_standard_pipeline_stub.py
 python scripts/verify_std_e_suite.py
 ```

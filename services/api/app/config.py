@@ -39,6 +39,20 @@ class Settings(BaseSettings):
     # 自备批改：提交时按题干/材料走标准生产（stub/llm），结果缓存复用
     custom_essay_standard_engine_enabled: bool = True
     custom_essay_standard_mode: str = "auto"  # auto | stub | llm
+    # 分层评分引擎（确定性脊柱 + 级别配置 + LLM 反馈融合）
+    layered_scoring_engine_enabled: bool = True
+    layered_scoring_max_llm_delta: float = 4.0
+    point_pool_pipeline_enabled: bool = True
+    scoring_llm_arbitration_enabled: bool = True
+    scoring_deliberation_enabled: bool = True
+    # OpenAI 兼容 Embedding（BGE 网关 / vLLM / 云厂商）
+    embedding_enabled: bool = True
+    embedding_api_url: str = ""
+    embedding_model: str = "bge-base-zh"
+    embedding_use_primary_base: bool = True
+    embedding_timeout_seconds: float = 45.0
+    embedding_batch_size: int = 32
+    embedding_max_chars_per_text: int = 2048
 
     @property
     def standards_annotation_path(self) -> Path:

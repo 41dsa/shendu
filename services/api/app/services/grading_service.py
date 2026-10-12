@@ -20,11 +20,16 @@ from app.models.entities import (
 )
 from app.services.ai_client import AiCallError, chat_completion_json, get_credential
 from app.domain.essay import essay_length_ratio, issue_tag_prompt_hint
-from app.services.coach_service import build_retry_comparison, find_report_for_submission
+from app.services.coach_service import (
+    build_retry_comparison,
+    find_baseline_report_for_retry,
+    find_report_for_submission,
+)
 from app.services.essay_context import EssayGradingContext, resolve_essay_context, word_bounds_for_context
 from app.services.standard_engine.custom_essay_standard import ensure_custom_essay_standard
 from app.services.essay_writing_guide import writing_guide_for_submission
 from app.services.prompt_service import get_active_grading_system_prompt
+from app.domain.scoring_engine.types import ScoringEngineResult
 from app.services.grading_helpers import (
     answer_hash,
     build_scoring_basis,
@@ -32,6 +37,16 @@ from app.services.grading_helpers import (
     confidence_user_note,
     compute_consensus_rate,
     normalize_llm_report_payload,
+    reconcile_scoring_points_to_total,
+    refresh_scoring_basis_fields,
+    sanitize_evidence_chain,
+    strip_holistic_dimension_rows,
+)
+from app.services.scoring_engine.merge import merge_engine_with_llm_payload
+from app.services.scoring_engine.orchestrator import (
+    engine_result_to_payload_meta,
+    run_scoring_engine,
+    run_scoring_engine_online,
 )
 
 GRADING_STEPS = [
@@ -71,6 +86,7 @@ scoring_points 对应题目给出的维度（如立意、结构、论证、语�
 若输入含 rubric_criteria，须按 semantic 匹配（acceptable_expressions / typical_gaps），禁止纯关键词匹配。
 usage_band=low 的准则仅作建议，不得作为强制扣分唯一依据。
 evidence_chain 0～5 条，追溯「维度/准则→作文片段→材料依据（若有）」；无准则可省略该数组。
+若 user JSON 含 deterministic_scoring，须以其总分为基准，总分调整一般不超过 ±4 分且须说明理由。
 issues 最多 3 条；suggestions 3～5 条。tag 必须使用 PRD 编号+名称，例如："""
 
 SYSTEM_PROMPT = (
@@ -206,23 +222,52 @@ async def run_grading_job(db: Session, job_id: str) -> None:
         ctx = resolve_essay_context(submission, question, db)
         content = submission.content.strip()
         word_min, word_max = word_bounds_for_context(ctx)
-        word_ratio = essay_length_ratio(len(content), word_min)
 
-        for step in GRADING_STEPS[:5]:
-            append_step(job, step)
-            db.commit()
-
-        if len(content) < 10 or word_ratio < 0.3:
-            reason = "作文过短" if len(content) < 10 else f"字数不足（低于建议字数 {word_min} 字的约 30%）"
-            payload = short_circuit_payload(ctx, reason, word_ratio)
-            append_step(job, "generate_report", "short_circuit")
-            report = Report(grading_job_id=job.id, user_id=job.user_id, payload=payload)
-            db.add(report)
-            job.status = GradingJobStatus.succeeded
-            job.finished_at = datetime.now(UTC)
-            job.current_step = "done"
-            db.commit()
-            return
+        engine_result: ScoringEngineResult | None = None
+        word_ratio = 1.0
+        if settings.layered_scoring_engine_enabled:
+            engine_out = await run_scoring_engine_online(
+                db,
+                ctx,
+                content,
+                user_id=job.user_id,
+                job_id=job.id,
+                submission_id=submission.id,
+            )
+            if isinstance(engine_out, dict):
+                word_ratio = float(engine_out.get("word_ratio") or 0)
+                append_step(job, "parse_prompt", "gate_reject")
+                append_step(job, "generate_report", "short_circuit")
+                report = Report(grading_job_id=job.id, user_id=job.user_id, payload=engine_out)
+                db.add(report)
+                job.status = GradingJobStatus.succeeded
+                job.finished_at = datetime.now(UTC)
+                job.current_step = "done"
+                db.commit()
+                return
+            engine_result = engine_out
+            word_ratio = essay_length_ratio(len(content), word_min)
+            append_step(job, "parse_prompt", f"gate_ok:{engine_result.exam_level}")
+            append_step(job, "check_requirements", "level_adapter")
+            append_step(job, "analyze_structure", "deterministic")
+            append_step(job, "analyze_thesis", engine_result.tier.tier_id)
+            append_step(job, "analyze_argumentation", f"hits:{len(engine_result.point_hits)}")
+        else:
+            word_ratio = essay_length_ratio(len(content), word_min)
+            for step in GRADING_STEPS[:5]:
+                append_step(job, step)
+            if len(content) < 10 or word_ratio < 0.3:
+                reason = "作文过短" if len(content) < 10 else f"字数不足（低于建议字数 {word_min} 字的约 30%）"
+                payload = short_circuit_payload(ctx, reason, word_ratio)
+                append_step(job, "generate_report", "short_circuit")
+                report = Report(grading_job_id=job.id, user_id=job.user_id, payload=payload)
+                db.add(report)
+                job.status = GradingJobStatus.succeeded
+                job.finished_at = datetime.now(UTC)
+                job.current_step = "done"
+                db.commit()
+                return
+        db.commit()
 
         h = answer_hash(ctx.cache_context_key, content)
         cached = (
@@ -231,8 +276,15 @@ async def run_grading_job(db: Session, job_id: str) -> None:
             .first()
         )
         if cached:
-            payload = dict(cached.report_payload)
+            payload = normalize_llm_report_payload(dict(cached.report_payload))
             payload["from_cache"] = True
+            refresh_scoring_basis_fields(payload)
+            if submission.parent_submission_id:
+                payload["attempt"] = submission.attempt
+                baseline = find_baseline_report_for_retry(db, submission)
+                if baseline and baseline.payload:
+                    payload["comparison"] = build_retry_comparison(baseline.payload, payload)
+                    payload["parent_report_id"] = baseline.id
             append_step(job, "llm_score", "cache_hit")
             append_step(job, "review")
             append_step(job, "generate_report")
@@ -271,10 +323,14 @@ async def run_grading_job(db: Session, job_id: str) -> None:
         }
         if guide_excerpt:
             payload_in["writing_technique_reference"] = guide_excerpt
+        if engine_result is not None:
+            payload_in["deterministic_scoring"] = engine_result_to_payload_meta(engine_result)
+            payload_in["deterministic_scoring"]["total_score"] = engine_result.total_score
+            payload_in["deterministic_scoring"]["dimension_rows"] = engine_result.dimension_rows
         user_prompt = json.dumps(payload_in, ensure_ascii=False)
 
         append_step(job, "rule_score")
-        rule = rule_score_fallback(ctx, content)
+        rule = float(engine_result.total_score) if engine_result else rule_score_fallback(ctx, content)
         db.commit()
 
         append_step(job, "llm_score", "calling")
@@ -296,8 +352,16 @@ async def run_grading_job(db: Session, job_id: str) -> None:
         log_usage(db, job.user_id, job.id, cred, usage, "primary")
         payload = normalize_llm_report_payload(json.loads(raw))
 
+        if engine_result is not None:
+            payload = merge_engine_with_llm_payload(
+                engine_result,
+                payload,
+                max_llm_delta=settings.layered_scoring_max_llm_delta,
+                max_score=float(ctx.score),
+            )
         llm_score = float(payload.get("total_score", rule))
-        payload["rule_score"] = rule
+        if engine_result is None:
+            payload["rule_score"] = rule
 
         # 为维度条目补上 ability 字段，供 coach 能力聚合（与题库 rubric 对齐）
         rubric_by_id = {p.get("id"): p for p in (ctx.scoring_points or []) if p.get("id")}
@@ -312,8 +376,10 @@ async def run_grading_job(db: Session, job_id: str) -> None:
 
                 point["ability"] = label_to_ability(str(ref.get("label")))
 
-        primary_llm_score = llm_score
-        consensus_scores = [llm_score]
+        primary_llm_score = float(
+            payload.get("merged_total") or payload.get("total_score") or llm_score
+        )
+        consensus_scores = [primary_llm_score]
         consensus_delta: float | None = None
         consensus_discarded = False
 
@@ -326,15 +392,15 @@ async def run_grading_job(db: Session, job_id: str) -> None:
             try:
                 raw2, usage2 = await chat_completion_json(cred2, CONSENSUS_PROMPT, user_prompt)
                 log_usage(db, job.user_id, job.id, cred2, usage2, "consensus")
-                score2 = float(json.loads(raw2).get("score", llm_score))
+                score2 = float(json.loads(raw2).get("score", primary_llm_score))
                 consensus_scores.append(score2)
-                consensus_delta = abs(llm_score - score2)
+                consensus_delta = abs(primary_llm_score - score2)
                 max_delta = settings.grading_consensus_max_delta
                 if consensus_delta > max_delta:
                     consensus_discarded = True
                     llm_score = primary_llm_score
                 elif consensus_delta > 1.0:
-                    llm_score = round((llm_score + score2) / 2, 1)
+                    llm_score = round((primary_llm_score + score2) / 2, 1)
             except AiCallError:
                 consensus_scores.append(llm_score)
 
@@ -349,6 +415,9 @@ async def run_grading_job(db: Session, job_id: str) -> None:
         payload["consensus_rate"] = compute_consensus_rate(consensus_scores, float(ctx.score))
         payload["llm_score"] = llm_score
         payload["total_score"] = llm_score
+        strip_holistic_dimension_rows(payload)
+        reconcile_scoring_points_to_total(payload)
+        sanitize_evidence_chain(payload, essay_max=float(ctx.score))
 
         conf = compute_confidence(
             llm_score,
@@ -358,6 +427,8 @@ async def run_grading_job(db: Session, job_id: str) -> None:
             word_ratio,
             consensus_discarded=consensus_discarded,
         )
+        if payload.get("engine_total_discarded"):
+            conf = "medium"
         payload["confidence"] = conf
         payload["confidence_scope"] = "total_score"
         payload["confidence_note"] = confidence_user_note(
@@ -366,6 +437,10 @@ async def run_grading_job(db: Session, job_id: str) -> None:
             consensus_ran=payload["consensus_ran"],
             consensus_discarded=consensus_discarded,
         )
+        if payload.get("engine_total_discarded"):
+            payload["confidence_note"] = (
+                "规则引擎未匹配到足够要点，总分以完整批改主评为准；维度、问题与建议仍可直接用于修改。"
+            )
 
         span = 1.0 if conf == "high" else 2.0 if conf == "medium" else 2.5
         payload["score_range"] = [
@@ -392,6 +467,9 @@ async def run_grading_job(db: Session, job_id: str) -> None:
             "grading_standard_mode": grading_standard_mode,
             "writing_guide_applied": bool(guide_excerpt),
             "score_confidence_declaration": ctx.score_confidence_declaration,
+            "scoring_engine_mode": "layered" if engine_result is not None else "legacy",
+            "exam_level": engine_result.exam_level if engine_result else None,
+            "level_inferred": engine_result.level_inferred if engine_result else None,
         }
         if ctx.standard_version is not None:
             payload["standard_version"] = ctx.standard_version
@@ -405,14 +483,15 @@ async def run_grading_job(db: Session, job_id: str) -> None:
                 "prompt_excerpt": essay_prompt[:200],
             },
         )
+        refresh_scoring_basis_fields(payload)
 
         # 二次作答：与首次报告对比（P5 / BE-502）
         if submission.parent_submission_id:
             payload["attempt"] = submission.attempt
-            parent_report = find_report_for_submission(db, submission.parent_submission_id)
-            if parent_report and parent_report.payload:
-                payload["comparison"] = build_retry_comparison(parent_report.payload, payload)
-                payload["parent_report_id"] = parent_report.id
+            baseline_report = find_baseline_report_for_retry(db, submission)
+            if baseline_report and baseline_report.payload:
+                payload["comparison"] = build_retry_comparison(baseline_report.payload, payload)
+                payload["parent_report_id"] = baseline_report.id
 
         append_step(job, "generate_report")
         report = Report(grading_job_id=job.id, user_id=job.user_id, payload=payload)

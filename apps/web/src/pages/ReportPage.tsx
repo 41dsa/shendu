@@ -1,10 +1,11 @@
 import { Alert, Button, Card, Col, Collapse, Input, List, Modal, Row, Space, Tag, Typography, message } from "antd";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { api } from "../api/client";
+import ReportRewriteDemo from "../components/ReportRewriteDemo";
 import ReportScoringBasis from "../components/ReportScoringBasis";
-import { normalizeReportPayload } from "../utils/reportPayload";
+import { normalizeReportPayload, refreshComparisonScores } from "../utils/reportPayload";
 import { issueAnalysisText, issueBadgeText } from "../utils/issueDisplay";
 import { issueTypeTagStyle, severityLabel, severityVisual } from "../utils/severityLabel";
 
@@ -52,13 +53,19 @@ const CONF_TAG_COLOR: Record<string, string> = {
 
 export default function ReportPage() {
   const { reportId } = useParams();
+  const navigate = useNavigate();
   const qc = useQueryClient();
   const [disputeOpen, setDisputeOpen] = useState(false);
   const [disputeReason, setDisputeReason] = useState("");
   const { data } = useQuery({
     queryKey: ["report", reportId],
     enabled: !!reportId,
-    queryFn: () => api<{ id: string; payload: Record<string, unknown> }>(`/reports/${reportId}`),
+    queryFn: () =>
+      api<{
+        id: string;
+        payload: Record<string, unknown>;
+        submission?: { content?: string; user_prompt?: string | null; user_material?: string | null };
+      }>(`/reports/${reportId}`),
   });
   const submitDispute = useMutation({
     mutationFn: () =>
@@ -80,7 +87,18 @@ export default function ReportPage() {
     queryFn: () => api<{ basis: Record<string, unknown> }>(`/reports/${reportId}/basis`),
   });
 
-  const p = normalizeReportPayload((data?.payload ?? {}) as Record<string, unknown>);
+  const p = refreshComparisonScores(
+    normalizeReportPayload((data?.payload ?? {}) as Record<string, unknown>),
+  );
+  const essayContent = String(data?.submission?.content ?? "").trim();
+  const rewriteDemo = p.rewrite_demo as
+    | {
+        status?: string;
+        rewrite_text?: string;
+        keep_segments?: { quote: string; reason?: string }[];
+        change_summary?: string[];
+      }
+    | undefined;
   const essayMeta = (p.essay_meta ?? {}) as Record<string, unknown>;
   const standardVersion =
     (p.standard_version as number | undefined) ??
@@ -130,10 +148,17 @@ export default function ReportPage() {
     new: "新出现",
   };
 
-  const scoringBasis = (basisData?.basis ?? p.scoring_basis ?? {}) as Record<string, unknown>;
+  const scoringBasis = {
+    ...((p.scoring_basis as Record<string, unknown> | undefined) ?? {}),
+    ...(basisData?.basis ?? {}),
+    rule_score: basisData?.basis?.rule_score ?? p.rule_score,
+    primary_llm_score: basisData?.basis?.primary_llm_score ?? p.primary_llm_score ?? p.total_score,
+    llm_score: basisData?.basis?.llm_score ?? p.llm_score ?? p.total_score,
+    engine_total_discarded: basisData?.basis?.engine_total_discarded ?? p.engine_total_discarded,
+  } as Record<string, unknown>;
   const reviewNotes =
-    (scoringBasis.steps_summary as string | undefined) ||
     (p.review_notes as string | undefined) ||
+    (scoringBasis.steps_summary as string | undefined) ||
     undefined;
 
   return (
@@ -195,7 +220,7 @@ export default function ReportPage() {
           type="success"
           showIcon
           style={{ marginTop: 16 }}
-          message="二次批改对比"
+          message={p.attempt && Number(p.attempt) > 2 ? "重作批改对比" : "二次批改对比"}
           description={
             <Space direction="vertical">
               <span>
@@ -228,6 +253,23 @@ export default function ReportPage() {
         <Collapse
           items={[
             {
+              key: "rewrite",
+              label: "改写范例与原文对照",
+              children: (
+                <ReportRewriteDemo
+                  reportId={reportId ?? ""}
+                  essayContent={essayContent}
+                  rewriteDemo={rewriteDemo}
+                  displayReferenceOnly={displayReferenceOnly}
+                  onPayloadUpdate={(next) => {
+                    qc.setQueryData(["report", reportId], (prev: typeof data) =>
+                      prev ? { ...prev, payload: next } : prev,
+                    );
+                  }}
+                />
+              ),
+            },
+            {
               key: "basis",
               label: "查看评分依据",
               children: (
@@ -248,6 +290,34 @@ export default function ReportPage() {
           ]}
         />
       </div>
+
+      {(() => {
+        const pts = (p.scoring_points as ScoringPoint[]) ?? [];
+        const dimSum = pts.reduce((s, it) => s + Number(it.earned ?? 0), 0);
+        const totalNum = Number(p.total_score);
+        const reconcileNote = p.score_reconcile_note as string | undefined;
+        if (
+          reconcileNote ||
+          (Number.isFinite(dimSum) &&
+            Number.isFinite(totalNum) &&
+            dimSum > 0 &&
+            Math.abs(dimSum - totalNum) > 1.5)
+        ) {
+          return (
+            <Alert
+              type="info"
+              showIcon
+              style={{ marginTop: 16 }}
+              message="维度加总与报告总分"
+              description={
+                reconcileNote ||
+                `各维度加总约 ${dimSum.toFixed(1)} 分，报告采用总分为 ${totalNum} 分；以顶部总分为准，维度已做或将在展示时校准。`
+              }
+            />
+          );
+        }
+        return null;
+      })()}
 
       <Row gutter={16} style={{ marginTop: 24 }}>
         <Col span={14}>
@@ -319,8 +389,13 @@ export default function ReportPage() {
               </List.Item>
             )}
           />
-          <Button type="primary" block style={{ marginTop: 16 }}>
-            <Link to={`/reports/${reportId}/retry`}>重新作答</Link>
+          <Button
+            type="primary"
+            block
+            style={{ marginTop: 16 }}
+            onClick={() => navigate(`/reports/${reportId}/retry`)}
+          >
+            重新作答
           </Button>
         </Col>
       </Row>

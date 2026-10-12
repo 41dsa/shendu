@@ -26,6 +26,7 @@ from app.services.standard_engine.stub_generate import (
     stub_question_standard,
     stub_rubric_standard,
 )
+from app.services.point_pool_pipeline.build import build_point_pool_bundle_sync_stub, bundle_to_payload_dict
 
 
 def custom_essay_standard_enabled() -> bool:
@@ -91,12 +92,14 @@ def _build_stub_bundle(essay: EssayQuestionSchema) -> dict[str, Any]:
     if validation.get("enriched_rubric"):
         rubric_dict = validation["enriched_rubric"]
         rubric = RubricStandardSchema.model_validate(rubric_dict)
+    point_pools = _point_pools_for_essay(essay, q_std, mat, rubric)
     return build_cache_bundle(
         question_std=q_std.model_dump(),
         material_analysis=mat.model_dump(),
         rubric_candidates={"source": "custom_essay_stub"},
         rubric_merged=rubric.model_dump(),
         validate_p05={"source": "custom_essay", "coverage_ratio": validation.get("checks", [{}])[1].get("coverage_ratio", 1.0)},
+        point_pools=point_pools,
     )
 
 
@@ -127,13 +130,29 @@ async def _build_llm_bundle(
     if validation.get("enriched_rubric"):
         rubric_dict = validation["enriched_rubric"]
         rubric = RubricStandardSchema.model_validate(rubric_dict)
+    point_pools = _point_pools_for_essay(essay, q_std, mat, rubric)
     return build_cache_bundle(
         question_std=q_std.model_dump(),
         material_analysis=mat.model_dump(),
         rubric_candidates={"candidates": rubric_debug.get("candidates") or [], "source": "custom_essay_llm"},
         rubric_merged=rubric.model_dump(),
         validate_p05={"source": "custom_essay_llm", "coverage_ratio": 0.9},
+        point_pools=point_pools,
     )
+
+
+def _point_pools_for_essay(essay, q_std, mat, rubric) -> dict[str, Any]:
+    if not settings.point_pool_pipeline_enabled:
+        return {}
+    pp = build_point_pool_bundle_sync_stub(
+        question_id=essay.question_id,
+        prompt=essay.prompt,
+        material=essay.material_optional,
+        rubric_criteria=[c.model_dump() for c in rubric.criteria],
+        focus_points=list(q_std.focus_points or []),
+        themes=list(mat.themes or []),
+    )
+    return bundle_to_payload_dict(pp)
 
 
 def bundle_to_grading_payload(bundle: dict[str, Any], *, fingerprint: str, gen_mode: str) -> dict[str, Any]:
@@ -145,6 +164,7 @@ def bundle_to_grading_payload(bundle: dict[str, Any], *, fingerprint: str, gen_m
         "material_analysis": bundle.get("material_analysis") or {},
         "rubric_standard": rubric,
         "loss_rules": loss_rules,
+        "point_pools": bundle.get("point_pools") or {},
         "_meta": {
             "version": 1,
             "custom": True,

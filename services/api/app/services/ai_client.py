@@ -64,8 +64,7 @@ def _raise_for_response(resp: httpx.Response, *, context: str) -> None:
             raise AiCallError(
                 "UPSTREAM",
                 f"{context} ({resp.status_code}){extra}。"
-                "请检查 Base URL（DeepSeek 建议 https://api.deepseek.com/v1）、模型名、"
-                "以及是否支持 JSON 模式；先在 AI 设置点「测试连接」。",
+                "请检查该槽位的 Base URL、模型名是否与厂商文档一致（OpenAI 兼容 /v1/chat/completions）。",
             )
         raise AiCallError("UPSTREAM", f"{context} ({resp.status_code}){extra}")
 
@@ -102,7 +101,22 @@ async def test_connection(cred: UserProviderCredential) -> dict:
                 "json_mode": False,
                 "warning": "当前模型不支持 response_format=json_object，批改将使用兼容模式。",
             }
-        _raise_for_response(resp2, context="模型服务错误")
+        payload_minimal = {
+            "model": cred.model,
+            "messages": [{"role": "user", "content": "ping"}],
+            "max_tokens": 16,
+            "temperature": 0,
+        }
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp3 = await client.post(url, json=payload_minimal, headers=headers)
+        if resp3.status_code < 400:
+            return {
+                "ok": True,
+                "status_code": resp3.status_code,
+                "json_mode": False,
+                "warning": "连接成功（极简请求）；批改将按该厂商兼容模式调用。",
+            }
+        _raise_for_response(resp3, context="模型服务错误")
     _raise_for_response(resp, context="模型服务错误")
     return {"ok": True, "status_code": resp.status_code, "json_mode": True}
 

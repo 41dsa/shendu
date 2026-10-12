@@ -39,9 +39,22 @@ class GradingQueueResponse(BaseModel):
     jobs: list[GradingJobListItem]
 
 
+class ReportSubmissionSnapshot(BaseModel):
+    content: str = ""
+    user_prompt: str | None = None
+    user_material: str | None = None
+
+
+class RewriteDemoResponse(BaseModel):
+    report_id: str
+    rewrite_demo: dict
+    payload: dict
+
+
 class ReportResponse(BaseModel):
     id: str
     payload: dict
+    submission: ReportSubmissionSnapshot | None = None
 
 
 class ReportListItem(BaseModel):

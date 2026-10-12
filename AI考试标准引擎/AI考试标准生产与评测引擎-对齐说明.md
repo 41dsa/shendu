@@ -22,7 +22,7 @@
 | ① 试题解析 | **增强** | `question_parse.parse_essay_question_metadata`；流水线 step `structured.parse` |
 | ② 标准生产 | 已有 | `pipeline.py` P01～P04 / stub / LLM |
 | ③ 标准验证 | **增强** | `validation.py` + 准则 **usage_band**、区间分、置信度分层摘要 |
-| ④ 评分执行 | 已有 | `grading_service.py`；自备=默认 Rubric，题库=已发布标准 |
+| ④ 评分执行 | **自备已接入** | `custom_essay_standard.py`：批改前生成/缓存标准；`grading_standard_mode=custom_engine` |
 | ⑤ 证据解释 | **增强** | 批改 JSON `evidence_chain`；报告「评分证据链」 |
 | ⑥ 评分校准 | **增量** | 金标回归 + `export_calibration_dataset.py`；争议导出（人工闭环待运营） |
 | ⑦ 标准版本 | 已有 | `exam_question_standards.version`；报告 `standard_version` |

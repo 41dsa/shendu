@@ -25,6 +25,7 @@ const CONF_COLOR: Record<string, string> = { high: "green", medium: "blue", low:
 
 const MODE_ZH: Record<string, string> = {
   published: "本题已发布的考试标准（考试标准引擎）",
+  custom_engine: "根据你的题干与材料现场生成的评分标准（考试标准引擎 · 自备题）",
   default_rubric: "内置默认大作文四维 Rubric（立意、结构、论证、语言）",
 };
 

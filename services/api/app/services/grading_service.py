@@ -22,6 +22,7 @@ from app.services.ai_client import AiCallError, chat_completion_json, get_creden
 from app.domain.essay import essay_length_ratio, issue_tag_prompt_hint
 from app.services.coach_service import build_retry_comparison, find_report_for_submission
 from app.services.essay_context import EssayGradingContext, resolve_essay_context, word_bounds_for_context
+from app.services.standard_engine.custom_essay_standard import ensure_custom_essay_standard
 from app.services.essay_writing_guide import writing_guide_for_submission
 from app.services.prompt_service import get_active_grading_system_prompt
 from app.services.grading_helpers import (
@@ -184,12 +185,25 @@ async def run_grading_job(db: Session, job_id: str) -> None:
         job.error_message = "题目不存在"
         db.commit()
         return
-    ctx = resolve_essay_context(submission, question, db)
-
+    custom_prompt = bool((submission.user_prompt or "").strip())
     job.status = GradingJobStatus.running
     db.commit()
 
     try:
+        if custom_prompt:
+            append_step(job, "custom_standard", "generating")
+            db.commit()
+            await ensure_custom_essay_standard(
+                db,
+                submission,
+                question,
+                user_id=job.user_id,
+                grading_job_id=job.id,
+            )
+            append_step(job, "custom_standard", "done")
+            db.commit()
+
+        ctx = resolve_essay_context(submission, question, db)
         content = submission.content.strip()
         word_min, word_max = word_bounds_for_context(ctx)
         word_ratio = essay_length_ratio(len(content), word_min)
@@ -244,10 +258,10 @@ async def run_grading_job(db: Session, job_id: str) -> None:
             "reference_material": ctx.reference_material,
             "rubric_dimensions": ctx.scoring_points,
             "focus_points": ctx.focus_points,
-                "loss_rules": ctx.loss_rules,
-                "rubric_criteria": ctx.rubric_criteria,
-                "score_confidence_declaration": ctx.score_confidence_declaration,
-                "standard_version": ctx.standard_version,
+            "loss_rules": ctx.loss_rules,
+            "rubric_criteria": ctx.rubric_criteria,
+            "score_confidence_declaration": ctx.score_confidence_declaration,
+            "standard_version": ctx.standard_version,
             "exam_policy": ctx.exam_policy,
             "exam_standard_version": ctx.exam_standard_version,
             "max_score": ctx.score,
@@ -361,7 +375,12 @@ async def run_grading_job(db: Session, job_id: str) -> None:
 
         payload["display_mode"] = "normal"
 
-        grading_standard_mode = "published" if ctx.standard_version is not None else "default_rubric"
+        if ctx.standard_version is not None and custom_prompt:
+            grading_standard_mode = "custom_engine"
+        elif ctx.standard_version is not None:
+            grading_standard_mode = "published"
+        else:
+            grading_standard_mode = "default_rubric"
         payload["essay_meta"] = {
             "word_min": word_min,
             "word_max": word_max,
@@ -398,14 +417,23 @@ async def run_grading_job(db: Session, job_id: str) -> None:
         append_step(job, "generate_report")
         report = Report(grading_job_id=job.id, user_id=job.user_id, payload=payload)
         db.add(report)
+        db.flush()
 
-        db.add(
-            GradingAnswerCache(
-                question_id=question.id,
-                answer_hash=h,
-                report_payload=payload,
-            )
+        cache_row = (
+            db.query(GradingAnswerCache)
+            .filter(GradingAnswerCache.question_id == question.id, GradingAnswerCache.answer_hash == h)
+            .first()
         )
+        if cache_row:
+            cache_row.report_payload = payload
+        else:
+            db.add(
+                GradingAnswerCache(
+                    question_id=question.id,
+                    answer_hash=h,
+                    report_payload=payload,
+                )
+            )
 
         job.status = GradingJobStatus.succeeded
         job.finished_at = datetime.now(UTC)
@@ -415,16 +443,21 @@ async def run_grading_job(db: Session, job_id: str) -> None:
         job.status = GradingJobStatus.failed
         job.error_message = f"{exc.code}: {exc}"
         job.finished_at = datetime.now(UTC)
-        append_step(job, "llm_score", f"failed:{exc.code}")
+        fail_step = "llm_score"
+        if custom_prompt and not any(s.get("step") == "parse_prompt" for s in (job.steps or [])):
+            fail_step = "custom_standard"
+        append_step(job, fail_step, f"failed:{exc.code}")
+        job.current_step = "done"
         db.commit()
     except json.JSONDecodeError:
         job.status = GradingJobStatus.failed
         job.error_message = "UPSTREAM: 模型返回非 JSON"
         job.finished_at = datetime.now(UTC)
+        job.current_step = "done"
         db.commit()
     except Exception as exc:  # noqa: BLE001
         job.status = GradingJobStatus.failed
-        job.error_message = "INTERNAL"
+        job.error_message = f"INTERNAL: {str(exc)[:400]}"
         job.finished_at = datetime.now(UTC)
+        job.current_step = "done"
         db.commit()
-        raise exc

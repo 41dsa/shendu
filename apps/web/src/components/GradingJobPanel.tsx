@@ -1,4 +1,4 @@
-import { Alert, Button, Card, List, Result, Spin, Steps, Typography } from "antd";
+import { Alert, Button, Card, List, Result, Space, Spin, Steps, Typography } from "antd";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
@@ -24,7 +24,7 @@ export type GradingJob = {
   submission?: GradingJobSubmissionSnapshot | null;
 };
 
-const GRADING_STEP_ORDER = [
+const GRADING_STEP_ORDER_BASE = [
   "parse_prompt",
   "check_requirements",
   "analyze_structure",
@@ -37,6 +37,7 @@ const GRADING_STEP_ORDER = [
 ] as const;
 
 const STEP_LABELS: Record<string, string> = {
+  custom_standard: "解析题目与评分标准",
   parse_prompt: "解析题干",
   check_requirements: "核对字数与要求",
   analyze_structure: "分析篇章结构",
@@ -49,6 +50,25 @@ const STEP_LABELS: Record<string, string> = {
   done: "完成",
   queued: "排队中",
 };
+
+const STEP_DETAIL_ZH: Record<string, string> = {
+  done: "已完成",
+  generating: "执行中",
+  calling: "模型调用中",
+  calling_llm: "模型调用中",
+  cache_hit: "命中缓存",
+  short_circuit: "提前结束",
+  consensus: "共识复核",
+};
+
+function formatStepDetail(detail: string): string {
+  const mapped = STEP_DETAIL_ZH[detail];
+  if (mapped) return mapped;
+  if (detail.startsWith("failed:")) {
+    return `失败（${detail.slice("failed:".length)}）`;
+  }
+  return detail;
+}
 
 type Props = {
   jobId: string;
@@ -87,16 +107,20 @@ function formatWaitDuration(totalSec: number): string {
 
 function stepStatus(
   step: string,
-  completed: Set<string>,
+  steps: { step: string; detail: string }[],
   current: string | null,
   inProgress: boolean,
 ): "finish" | "process" | "wait" | "error" {
-  if (completed.has(step)) {
-    if (inProgress && current === step) return "process";
-    return "finish";
-  }
+  const entries = steps.filter((s) => s.step === step);
+  if (entries.some((e) => e.detail === "done")) return "finish";
   if (inProgress && current === step) return "process";
+  if (entries.length > 0 && inProgress) return "process";
   return "wait";
+}
+
+function gradingStepOrder(isCustom: boolean): readonly string[] {
+  if (isCustom) return ["custom_standard", ...GRADING_STEP_ORDER_BASE];
+  return GRADING_STEP_ORDER_BASE;
 }
 
 /** 批改页内常驻进度区（不自动跳转报告，避免一闪而过） */
@@ -104,14 +128,21 @@ export default function GradingJobPanel({ jobId, onClose }: Props) {
   const qc = useQueryClient();
   const [elapsedSec, setElapsedSec] = useState(0);
 
-  const { data, isLoading, isFetching } = useQuery({
+  const { data, isLoading } = useQuery({
     queryKey: ["grading-job", jobId],
     queryFn: () => api<GradingJob>(`/grading-jobs/${jobId}`),
     refetchInterval: (q) => {
       const st = q.state.data?.status;
-      if (st === "succeeded" || st === "failed") {
+      if (st === "failed") {
         qc.invalidateQueries({ queryKey: ["grading-queue"] });
         return false;
+      }
+      if (st === "succeeded") {
+        if (q.state.data?.report_id) {
+          qc.invalidateQueries({ queryKey: ["grading-queue"] });
+          return false;
+        }
+        return 800;
       }
       return 1500;
     },
@@ -134,16 +165,19 @@ export default function GradingJobPanel({ jobId, onClose }: Props) {
 
   const stepItems = useMemo(() => {
     if (!data) return [];
-    const completed = new Set((data.steps ?? []).map((s) => s.step));
-    const current = data.current_step ?? data.steps?.at(-1)?.step ?? null;
+    const steps = data.steps ?? [];
+    const current = data.current_step ?? steps.at(-1)?.step ?? null;
     const inProgress = data.status === "queued" || data.status === "running";
-    return GRADING_STEP_ORDER.map((step) => ({
+    const order = gradingStepOrder(Boolean(data.submission?.is_custom));
+    return order.map((step) => ({
       title: STEP_LABELS[step] ?? step,
-      status: stepStatus(step, completed, current, inProgress),
+      status: stepStatus(step, steps, current, inProgress),
       description:
-        inProgress && current === step && step === "llm_score"
-          ? "调用模型中…（通常 10～120 秒）"
-          : undefined,
+        inProgress && current === step && step === "custom_standard"
+          ? "正在依据题干与材料，生成本题大作文的评分维度与要点，一般约 1～2 分钟；题干或材料较长时可能稍久。"
+          : inProgress && current === step && step === "llm_score"
+            ? "调用模型中…（通常 10～120 秒）"
+            : undefined,
     }));
   }, [data]);
 
@@ -160,7 +194,9 @@ export default function GradingJobPanel({ jobId, onClose }: Props) {
   if (data.status === "failed") {
     const raw = data.error_message ?? "";
     const subTitle =
-      raw.includes("TIMEOUT") || raw.includes("超时")
+      raw.includes("unexpected keyword argument")
+        ? "自备题准备打分标准时程序接口不匹配（已修复需重启 API）。请重启后端服务后刷新页面再试一次。"
+        : raw.includes("TIMEOUT") || raw.includes("超时")
         ? "模型调用超时或长时间无响应。请到「AI 设置」检查 Base URL（DeepSeek 需 https://api.deepseek.com/v1）、模型名与 Key，并点「测试连接」。开发环境需重启 API 后重试（已默认进程内批改，无需 Celery worker）。"
         : raw.includes("UPSTREAM") && raw.includes("400")
           ? "模型接口返回 400：常见原因是 Base URL 未带 /v1、模型名称错误或 Key 无权限。请到「AI 设置」核对并重新「测试连接」。"
@@ -178,9 +214,14 @@ export default function GradingJobPanel({ jobId, onClose }: Props) {
           title="批改失败"
           subTitle={subTitle}
           extra={
-            <Button type="primary">
-              <Link to="/settings/ai">打开 AI 设置</Link>
-            </Button>
+            <Space>
+              {onClose ? (
+                <Button onClick={onClose}>关闭进度</Button>
+              ) : null}
+              <Button type="primary">
+                <Link to="/settings/ai">打开 AI 设置</Link>
+              </Button>
+            </Space>
           }
         />
         {raw && raw !== subTitle ? (
@@ -188,6 +229,14 @@ export default function GradingJobPanel({ jobId, onClose }: Props) {
             详情：{raw}
           </Typography.Paragraph>
         ) : null}
+      </Card>
+    );
+  }
+
+  if (data.status === "succeeded" && !data.report_id) {
+    return (
+      <Card title="大作文批改进度" style={{ marginBottom: 16, borderColor: "#b7eb8f" }}>
+        <Spin tip="批改已完成，正在同步报告…" />
       </Card>
     );
   }
@@ -220,7 +269,6 @@ export default function GradingJobPanel({ jobId, onClose }: Props) {
       extra={
         <Typography.Text type="secondary">
           {inProgress ? `本步已等待 ${formatWaitDuration(elapsedSec)}` : data.status}
-          {isFetching ? " · 刷新中" : ""}
           {onClose ? (
             <>
               {" · "}
@@ -261,7 +309,7 @@ export default function GradingJobPanel({ jobId, onClose }: Props) {
           dataSource={data.steps}
           renderItem={(s) => (
             <List.Item>
-              {STEP_LABELS[s.step] ?? s.step} — {s.detail}
+              {STEP_LABELS[s.step] ?? s.step} — {formatStepDetail(s.detail)}
               {s.at ? ` · ${new Date(s.at).toLocaleTimeString()}` : ""}
             </List.Item>
           )}

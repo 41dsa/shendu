@@ -33,13 +33,13 @@ type Props = {
 };
 
 export default function GradingQueuePanel({ selectedJobId, onSelectJob, enabled = true }: Props) {
-  const { data, isFetching } = useQuery({
+  const { data } = useQuery({
     queryKey: ["grading-queue"],
     queryFn: () => api<QueueResponse>("/grading-jobs"),
     enabled,
     refetchInterval: (q) => {
       const active = q.state.data?.active_count ?? 0;
-      return active > 0 ? 2500 : 15000;
+      return active > 0 ? 2500 : false;
     },
   });
 
@@ -57,8 +57,7 @@ export default function GradingQueuePanel({ selectedJobId, onSelectJob, enabled 
       style={{ marginBottom: 16 }}
       extra={
         <Typography.Text type="secondary">
-          进行中 {active_count}/{max_concurrent}
-          {isFetching ? " · 刷新中" : ""}
+          排队名额 {active_count}/{max_concurrent}
         </Typography.Text>
       }
     >

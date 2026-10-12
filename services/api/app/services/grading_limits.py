@@ -49,10 +49,16 @@ def reconcile_stale_grading_jobs(db: Session, user_id: str | None = None) -> int
         llm_stuck_cutoff = now - timedelta(minutes=settings.grading_llm_stuck_minutes)
         stale = job.status == GradingJobStatus.queued and created < queued_cutoff
         stale = stale or (job.status == GradingJobStatus.running and created < running_cutoff)
+        custom_stuck_cutoff = now - timedelta(minutes=max(settings.grading_llm_stuck_minutes * 3, 12))
         stale = stale or (
             job.status == GradingJobStatus.running
             and job.current_step == "llm_score"
             and activity < llm_stuck_cutoff
+        )
+        stale = stale or (
+            job.status == GradingJobStatus.running
+            and job.current_step == "custom_standard"
+            and activity < custom_stuck_cutoff
         )
         if not stale:
             continue
@@ -61,6 +67,10 @@ def reconcile_stale_grading_jobs(db: Session, user_id: str | None = None) -> int
             job.error_message = (
                 "TIMEOUT: 模型调用长时间无响应。请检查 AI 设置中的 Base URL / 模型 / Key；"
                 "开发环境请勿仅启动 Celery 队列而不跑 worker（默认已改为进程内批改）。"
+            )
+        elif job.current_step == "custom_standard":
+            job.error_message = (
+                "TIMEOUT: 自备题评分标准生成超时。可将 CUSTOM_ESSAY_STANDARD_MODE=stub 后重试，或检查 AI 设置。"
             )
         else:
             job.error_message = "任务超时或 worker 未消费，已自动释放队列位"

@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.domain.essay import DEFAULT_RUBRIC_DIMENSIONS, USER_ESSAY_QUESTION_ID, essay_word_bounds
 from app.models.entities import Question, QuestionType, Submission
 from app.services.standard_engine.exam_standard_service import get_active_exam_standard
+from app.services.standard_engine.custom_essay_standard import get_cached_custom_payload
 from app.services.standard_engine.standard_store import (
     get_active_standard_payload,
     rubric_criteria_from_payload,
@@ -60,23 +61,26 @@ def resolve_essay_context(
     standard_version: int | None = None
     exam_policy: dict[str, Any] | None = None
     exam_standard_version: int | None = None
-    if custom or question.id == USER_ESSAY_QUESTION_ID:
-        scoring = DEFAULT_RUBRIC_DIMENSIONS
-    elif db is not None:
+    active: dict[str, Any] | None = None
+    if custom and db is not None:
+        active = get_cached_custom_payload(db, submission, question)
+    if active is None and not custom and db is not None:
         active = get_active_standard_payload(db, question.id)
-        if active:
-            dims = rubric_dimensions_from_payload(active)
-            if dims:
-                scoring = dims
-            q_std = active.get("question_standard") or {}
-            focus_points = list(q_std.get("focus_points") or [])
-            loss_rules = list(active.get("loss_rules") or [])
-            rubric_criteria = rubric_criteria_from_payload(active)
-            rubric_std = active.get("rubric_standard") or {}
-            rules = rubric_std.get("scoring_rules") or {}
-            score_confidence_declaration = rules.get("score_confidence_declaration")
-            meta = active.get("_meta") or {}
-            standard_version = meta.get("version")
+    if active:
+        dims = rubric_dimensions_from_payload(active)
+        if dims:
+            scoring = dims
+        q_std = active.get("question_standard") or {}
+        focus_points = list(q_std.get("focus_points") or [])
+        loss_rules = list(active.get("loss_rules") or [])
+        rubric_criteria = rubric_criteria_from_payload(active)
+        rubric_std = active.get("rubric_standard") or {}
+        rules = rubric_std.get("scoring_rules") or {}
+        score_confidence_declaration = rules.get("score_confidence_declaration")
+        meta = active.get("_meta") or {}
+        standard_version = meta.get("version")
+    elif custom or question.id == USER_ESSAY_QUESTION_ID:
+        scoring = DEFAULT_RUBRIC_DIMENSIONS
 
     if (
         db is not None

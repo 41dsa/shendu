@@ -36,6 +36,9 @@ class Settings(BaseSettings):
     essay_writing_guide_enabled: bool = False
     essay_writing_guide_path: str = ""
     essay_writing_guide_max_chars: int = 10000
+    # 自备批改：提交时按题干/材料走标准生产（stub/llm），结果缓存复用
+    custom_essay_standard_engine_enabled: bool = True
+    custom_essay_standard_mode: str = "auto"  # auto | stub | llm
 
     @property
     def standards_annotation_path(self) -> Path:

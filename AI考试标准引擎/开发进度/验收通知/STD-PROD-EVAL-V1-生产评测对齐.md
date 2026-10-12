@@ -34,7 +34,9 @@ python scripts/verify_std_e_suite.py
 
 ### 自备批改
 
-- 仍用 **默认四维**，不读 QuestionStandard；与方案 §V2 全量采分匹配 **无冲突**（属产品路径选择）
+- 默认 **走标准引擎**：`custom_essay_standard.py`（批改步 `custom_standard` → 缓存 → `custom_engine`）
+- 关闭：`.env` 设 `CUSTOM_ESSAY_STANDARD_ENGINE_ENABLED=false` 回退默认四维
+- 模式：`CUSTOM_ESSAY_STANDARD_MODE=auto|stub|llm`（auto=有 BYOK 则 LLM 生成标准，否则 stub）
 
 ## 通过标准
 

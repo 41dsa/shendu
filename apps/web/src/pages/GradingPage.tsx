@@ -24,8 +24,11 @@ import GradingJobPanel, { type GradingJobSubmissionSnapshot } from "../component
 import GradingQueuePanel from "../components/GradingQueuePanel";
 import ActivationRequiredNotice from "../components/ActivationRequiredNotice";
 import { useEntitlement } from "../hooks/useEntitlement";
+import { countShenlunBodyChars } from "../utils/essayCharCount";
 
 const DRAFT_KEY = "shendu_grading_draft_v1";
+
+type CustomExamLevel = "provincial" | "municipal" | "enforcement";
 
 type GradingDraft = {
   mode: "bank" | "custom";
@@ -33,6 +36,17 @@ type GradingDraft = {
   userPrompt: string;
   userMaterial: string;
   answer: string;
+  customExamLevel?: CustomExamLevel;
+};
+
+type ExamProfileHint = {
+  suggested_custom_exam_level?: string | null;
+};
+
+type FormOptionLevel = { value: string; label: string };
+
+type ExamFormOptions = {
+  custom_exam_levels?: FormOptionLevel[];
 };
 
 type QuestionListItem = {
@@ -83,8 +97,24 @@ export default function GradingPage() {
   const [userPrompt, setUserPrompt] = useState(initial?.userPrompt ?? "");
   const [userMaterial, setUserMaterial] = useState(initial?.userMaterial ?? "");
   const [answer, setAnswer] = useState(initial?.answer ?? "");
+  const [customExamLevel, setCustomExamLevel] = useState<CustomExamLevel>(
+    initial?.customExamLevel ?? "municipal",
+  );
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const restoredFormForJobRef = useRef<string | null>(null);
+  const customLevelTouchedRef = useRef(Boolean(initial?.customExamLevel));
+
+  const { data: examProfile } = useQuery({
+    queryKey: ["exam-profile"],
+    queryFn: () => api<ExamProfileHint | null>("/exam-profiles"),
+    enabled: !!ent?.licensed,
+  });
+
+  const { data: examOptions } = useQuery({
+    queryKey: ["exam-profile-options"],
+    queryFn: () => api<ExamFormOptions>("/exam-profiles/options"),
+    enabled: !!ent?.licensed,
+  });
 
   const { data: catalog } = useQuery({
     queryKey: ["questions-catalog"],
@@ -113,6 +143,9 @@ export default function GradingPage() {
       setQuestionId(null);
       setUserPrompt(snap.user_prompt ?? "");
       setUserMaterial(snap.user_material ?? "");
+      const level = (snap.exam_level as CustomExamLevel | null) ?? "municipal";
+      customLevelTouchedRef.current = true;
+      setCustomExamLevel(level);
       setAnswer(content);
       localStorage.setItem(
         DRAFT_KEY,
@@ -122,6 +155,7 @@ export default function GradingPage() {
           userPrompt: snap.user_prompt ?? "",
           userMaterial: snap.user_material ?? "",
           answer: content,
+          customExamLevel: level,
         } satisfies GradingDraft),
       );
       return;
@@ -161,15 +195,39 @@ export default function GradingPage() {
   }, [mode, questionDetail]);
 
   useEffect(() => {
+    if (mode !== "custom" || customLevelTouchedRef.current) return;
+    const suggested = examProfile?.suggested_custom_exam_level;
+    if (suggested === "provincial" || suggested === "municipal" || suggested === "enforcement") {
+      setCustomExamLevel(suggested);
+    }
+  }, [mode, examProfile?.suggested_custom_exam_level]);
+
+  useEffect(() => {
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
-      const draft: GradingDraft = { mode, questionId, userPrompt, userMaterial, answer };
+      const draft: GradingDraft = {
+        mode,
+        questionId,
+        userPrompt,
+        userMaterial,
+        answer,
+        customExamLevel: mode === "custom" ? customExamLevel : undefined,
+      };
       localStorage.setItem(DRAFT_KEY, JSON.stringify(draft));
     }, 800);
     return () => {
       if (saveTimer.current) clearTimeout(saveTimer.current);
     };
-  }, [mode, questionId, userPrompt, userMaterial, answer]);
+  }, [mode, questionId, userPrompt, userMaterial, answer, customExamLevel]);
+
+  const customLevelOptions: FormOptionLevel[] =
+    examOptions?.custom_exam_levels?.length
+      ? examOptions.custom_exam_levels
+      : [
+          { value: "provincial", label: "副省级 / 中央机关" },
+          { value: "municipal", label: "市地级 / 县乡机关" },
+          { value: "enforcement", label: "行政执法类" },
+        ];
 
   const wordMin = mode === "bank" && questionDetail?.word_min ? questionDetail.word_min : 800;
   const wordMax = mode === "bank" && questionDetail?.word_max ? questionDetail.word_max : 1200;
@@ -196,6 +254,7 @@ export default function GradingPage() {
         body: JSON.stringify({
           user_prompt: prompt,
           user_material: userMaterial.trim() || null,
+          exam_level: customExamLevel,
           content: answer,
           status: "draft",
         }),
@@ -213,7 +272,13 @@ export default function GradingPage() {
 
   const clearJob = () => setSearchParams({});
 
-  const wordCount = answer.length;
+  const gradingInProgress =
+    !!activeJobId &&
+    (!activeJobForRestore ||
+      activeJobForRestore.status === "queued" ||
+      activeJobForRestore.status === "running");
+
+  const wordCount = countShenlunBodyChars(answer);
   const needsKey = ent?.licensed && !ent?.has_primary_ai_key;
 
   const materialUpload: UploadProps = {
@@ -258,8 +323,10 @@ export default function GradingPage() {
         />
       ) : null}
 
-      {!ent?.licensed ? <ActivationRequiredNotice variant="banner" feature="大作文批改" /> : null}
-      {needsKey ? (
+      {!gradingInProgress && !ent?.licensed ? (
+        <ActivationRequiredNotice variant="banner" feature="大作文批改" />
+      ) : null}
+      {!gradingInProgress && needsKey ? (
         <Alert
           type="info"
           showIcon
@@ -274,6 +341,8 @@ export default function GradingPage() {
         />
       ) : null}
 
+      {!gradingInProgress ? (
+      <>
       <Card size="small" style={{ marginBottom: 16 }}>
         <Space direction="vertical" style={{ width: "100%" }}>
           <Radio.Group
@@ -312,9 +381,25 @@ export default function GradingPage() {
             </Space>
           )}
           {mode === "custom" ? (
-            <Typography.Text type="secondary">
-              自备题使用默认维度 Rubric；题库题使用考试标准引擎已发布标准（更稳定）。
-            </Typography.Text>
+            <Space direction="vertical" style={{ width: "100%" }} size={8}>
+              <div>
+                <Typography.Text type="secondary" style={{ display: "block", marginBottom: 4 }}>
+                  适用申论卷别（影响维度权重与要点匹配；默认取自「考试目标」，可改）
+                </Typography.Text>
+                <Select
+                  style={{ width: "100%", maxWidth: 420 }}
+                  value={customExamLevel}
+                  onChange={(v) => {
+                    customLevelTouchedRef.current = true;
+                    setCustomExamLevel(v as CustomExamLevel);
+                  }}
+                  options={customLevelOptions}
+                />
+              </div>
+              <Typography.Text type="secondary">
+                自备题按所选卷别评分；若已开启自备标准引擎，仍会先根据题干生成要点，再按卷别加权。
+              </Typography.Text>
+            </Space>
           ) : null}
         </Space>
       </Card>
@@ -388,7 +473,7 @@ export default function GradingPage() {
               placeholder="粘贴或输入完整大作文正文（含标题与分段）…"
             />
             <Typography.Text type={wordCount < wordMin ? "warning" : "secondary"}>
-              {wordCount} 字（建议 {wordMin}～{wordMax} 字，以题干为准）
+              正文：{wordCount} 字（申论计字：不计空格与标题，标点中英文均计；建议 {wordMin}～{wordMax} 字，以题干为准）
             </Typography.Text>
             <Button
               type="primary"
@@ -403,6 +488,8 @@ export default function GradingPage() {
           </Card>
         </Col>
       </Row>
+      </>
+      ) : null}
     </>
   );
 }

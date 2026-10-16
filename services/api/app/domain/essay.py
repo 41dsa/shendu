@@ -52,6 +52,129 @@ def essay_length_ratio(char_count: int, word_min: int) -> float:
     return char_count / max(word_min, 1)
 
 
+# 方格纸计字：单格标点 +1，双格标点 +2（与前端 essayCharCount.ts 一致）
+_SINGLE_GRID_PUNCT = frozenset("，。；：？！、")
+_DOUBLE_GRID_CHARS = frozenset("《》（）\u201c\u201d\u2018\u2019")
+
+
+_HAN_CHAR_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
+
+
+def _is_title_line_for_shenlun_count(line: str) -> bool:
+    """仅识别短独立标题行，避免把正文首句（含逗号、长句）误判为标题。"""
+    t = line.strip()
+    if not t:
+        return False
+    if re.match(r"^#{1,6}\s+\S", t):
+        return True
+    if re.match(r"^[\u3000 ]{1,2}", line):
+        return False
+    body = re.sub(r"^#{1,6}\s+", "", t)
+    han = len(_HAN_CHAR_RE.findall(body))
+    if han == 0:
+        return False
+    if len(body) > 22 or re.search(r"[。！？；]", body):
+        return False
+    if "，" in body or "," in body:
+        return False
+    if re.search(r"[是在的有与为以这那]", body):
+        return False
+    return 2 <= han <= 18
+
+
+def essay_body_text_excluding_title(text: str) -> str:
+    """去掉文首自拟/独立标题行，保留正文（含段首缩进）。"""
+    if not text:
+        return ""
+    lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    skip: set[int] = set()
+    for idx, line in enumerate(lines):
+        if not line.strip():
+            continue
+        if _is_title_line_for_shenlun_count(line):
+            skip.add(idx)
+        break
+    return "\n".join(line for i, line in enumerate(lines) if i not in skip)
+
+
+def count_shenlun_body_han_chars(text: str) -> int:
+    """正文汉字数（不含标点）。"""
+    body = essay_body_text_excluding_title(text)
+    return len(_HAN_CHAR_RE.findall(body))
+
+
+def count_shenlun_body_chars(text: str) -> int:
+    """
+    申论正文字数：不计空格/换行、不计文首标题；
+    正文其余字符均计（汉字、数字、字母及中英文标点等）。
+    """
+    body = essay_body_text_excluding_title(text)
+    return sum(1 for ch in body if not ch.isspace())
+
+
+def count_essay_chars(text: str) -> int:
+    """
+    申论作文字数（方格纸）：
+    - 汉字、阿拉伯数字、英文字母等按实际占格各计 1（如「123」为 3 字，「abc」为 3 字）；
+    - 空白不计；
+    - 单格标点（，。；：？！、等）计 1；双格标点（——、……、书名号、引号、括号等）计 2。
+    """
+    if not text:
+        return 0
+    s = text.replace("\r\n", "\n").replace("\r", "\n")
+    total = 0
+    i = 0
+    n = len(s)
+    while i < n:
+        ch = s[i]
+        if ch in " \t\n":
+            i += 1
+            continue
+        if s.startswith("……", i):
+            total += 2
+            i += 2
+            continue
+        if s.startswith("——", i):
+            total += 2
+            i += 2
+            continue
+        if ch == "…":
+            j = i
+            while j < n and s[j] == "…":
+                j += 1
+            total += 2
+            i = j
+            continue
+        if ch == "—":
+            if i + 1 < n and s[i + 1] == "—":
+                total += 2
+                i += 2
+            else:
+                total += 2
+                i += 1
+            continue
+        if ch in _DOUBLE_GRID_CHARS:
+            total += 2
+            i += 1
+            continue
+        if ch in _SINGLE_GRID_PUNCT or ch in ",.;:?!":
+            total += 1
+            i += 1
+            continue
+        total += 1
+        i += 1
+    return total
+
+
+def essay_length_ratio_from_text(text: str, word_min: int) -> float:
+    return essay_length_ratio(count_shenlun_body_han_chars(text), word_min)
+
+
+def official_essay_char_count(text: str) -> int:
+    """批改、字数门槛、报告展示统一用申论正文字数。"""
+    return count_shenlun_body_chars(text)
+
+
 def issue_tag_prompt_hint() -> str:
     return "、".join(f"{t['code']} {t['label']}" for t in ESSAY_ISSUE_TAGS)
 
@@ -63,8 +186,60 @@ _ISSUE_KEYWORDS: dict[str, tuple[str, ...]] = {
     "Q24": ("论证", "因果", "分析不足", "对策为主"),
     "Q23": ("论据", "案例", "数据", "素材", "材料", "联系实际"),
     "Q17": ("语言", "口号", "模板", "病句", "错别字"),
-    "Q20": ("字数", "篇幅", "不足", "达标"),
+    "Q20": ("字数不足", "篇幅不足", "字数偏少", "未达字数", "字数未", "低于建议字数", "字数", "篇幅"),
 }
+
+
+def normalize_issue_code(raw: str | None) -> str:
+    """从「Q21 立意偏差」提取稳定键 Q21；无法识别时返回空串。"""
+    if not raw:
+        return ""
+    token = raw.strip().split()[0]
+    if re.match(r"^Q\d+$", token, re.I):
+        return token.upper()
+    return ""
+
+
+def issue_label_for_code(code: str) -> str | None:
+    c = code.upper()
+    for t in ESSAY_ISSUE_TAGS:
+        if t["code"] == c:
+            return t["label"]
+    return None
+
+
+def ability_for_issue_code(code: str) -> str | None:
+    c = code.upper()
+    for t in ESSAY_ISSUE_TAGS:
+        if t["code"] == c:
+            return t["ability"]
+    return None
+
+
+def ability_for_issue_tag(raw_tag: str | None) -> str | None:
+    code = normalize_issue_code(raw_tag)
+    if code:
+        return ability_for_issue_code(code)
+    return None
+
+
+def issue_tag_from_core_problem(title: str, problem: str) -> str:
+    """core_problems 条目：优先用 title 归类，避免长 problem 误触「论据/论证」等关键词。"""
+    for text in (title, problem):
+        t = text.strip()
+        if not t:
+            continue
+        for row in ESSAY_ISSUE_TAGS:
+            code = row["code"]
+            kws = _ISSUE_KEYWORDS.get(code, ())
+            if any(kw in t for kw in kws):
+                return f"{row['code']} {row['label']}"
+        short = resolve_issue_badge(t, None)
+        if short and short != "作答问题":
+            return short
+    if title.strip():
+        return title.strip()[:16]
+    return resolve_issue_badge(problem, None) if problem else "作答问题"
 
 
 def resolve_issue_badge(problem: str, raw_tag: str | None = None) -> str:

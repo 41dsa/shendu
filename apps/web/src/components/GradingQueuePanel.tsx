@@ -109,11 +109,7 @@ export default function GradingQueuePanel({ selectedJobId, onSelectJob, enabled 
                         </Typography.Text>
                       </Space>
                     }
-                    description={
-                      job.current_step
-                        ? `步骤：${job.current_step}`
-                        : new Date(job.created_at).toLocaleString()
-                    }
+                    description={new Date(job.created_at).toLocaleString()}
                   />
                 </List.Item>
               );

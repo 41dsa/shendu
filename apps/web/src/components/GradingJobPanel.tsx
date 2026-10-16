@@ -2,6 +2,7 @@ import { Alert, Button, Card, List, Result, Space, Spin, Steps, Typography } fro
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
+import { formatUserFacingError } from "../api/errors";
 import { api } from "../api/client";
 
 export type GradingJobSubmissionSnapshot = {
@@ -10,6 +11,7 @@ export type GradingJobSubmissionSnapshot = {
   is_custom: boolean;
   user_prompt: string | null;
   user_material: string | null;
+  exam_level?: string | null;
   content: string;
 };
 
@@ -226,16 +228,11 @@ export default function GradingJobPanel({ jobId, onClose }: Props) {
 
   if (data.status === "failed") {
     const raw = data.error_message ?? "";
-    const subTitle =
-      raw.includes("unexpected keyword argument")
-        ? "自备题准备打分标准时程序接口不匹配（已修复需重启 API）。请重启后端服务后刷新页面再试一次。"
-        : raw.includes("TIMEOUT") || raw.includes("超时")
-        ? "模型调用超时或长时间无响应。请到「AI 设置」检查 OpenAI 兼容 Base URL（一般为 …/v1）、模型名与 Key，并点「测试连接」。开发环境需重启 API 后重试（已默认进程内批改，无需 Celery worker）。"
-        : raw.includes("UPSTREAM") && raw.includes("400")
-          ? "模型接口返回 400：常见原因是 Base URL 未带 /v1、模型名称错误或 Key 无权限。请到「AI 设置」核对并重新「测试连接」。"
-          : raw.includes("INVALID_KEY") || raw.includes("NO_KEY")
-            ? "API Key 未配置或无效，请在「AI 设置」保存 Key 并测试连接。"
-            : raw || "请检查 API Key 与网络后重试";
+    const subTitle = formatUserFacingError(raw, "批改未完成，请稍后重试。");
+    const isDuplicate = raw.includes("DUPLICATE_ANSWER");
+    const needsAiSettings =
+      !isDuplicate &&
+      /NO_KEY|INVALID_KEY|INSUFFICIENT_BALANCE|UPSTREAM|402|余额|AI 设置/i.test(`${raw} ${subTitle}`);
     return (
       <Card
         title="大作文批改进度"
@@ -247,21 +244,22 @@ export default function GradingJobPanel({ jobId, onClose }: Props) {
           title="批改失败"
           subTitle={subTitle}
           extra={
-            <Space>
+            <Space wrap>
               {onClose ? (
                 <Button onClick={onClose}>关闭进度</Button>
               ) : null}
-              <Button type="primary">
-                <Link to="/settings/ai">打开 AI 设置</Link>
-              </Button>
+              {isDuplicate ? (
+                <Button type="primary">
+                  <Link to="/reports">查看批改报告</Link>
+                </Button>
+              ) : needsAiSettings ? (
+                <Button type="primary">
+                  <Link to="/settings/ai">打开 AI 设置</Link>
+                </Button>
+              ) : null}
             </Space>
           }
         />
-        {raw && raw !== subTitle ? (
-          <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginTop: 8 }}>
-            详情：{raw}
-          </Typography.Paragraph>
-        ) : null}
       </Card>
     );
   }

@@ -13,6 +13,45 @@ class AiCallError(Exception):
         super().__init__(message)
 
 
+def ai_error_user_message(code: str, message: str = "") -> str:
+    """面向用户的说明（不含 request_id、HTTP 原文）。"""
+    text = (message or "").strip()
+    if code == "INSUFFICIENT_BALANCE":
+        return text or "模型账户余额不足，请在服务商控制台充值或更换 API Key，并在「AI 设置」中更新。"
+    if code in ("NO_KEY", "NO_CREDENTIAL"):
+        return "未配置主模型 API Key。请打开「AI 设置」填写 Key、Base URL 与模型名，并点击「测试连接」。"
+    if code == "INVALID_KEY":
+        return "API Key 无效或无权限。请核对「AI 设置」中的 Key 与 Base URL。"
+    if code == "RATE_LIMIT":
+        return "请求过于频繁或账户受限，请稍后再试。"
+    if code == "NETWORK":
+        return "无法连接模型服务，请检查网络与 Base URL 是否正确。"
+    if code == "DUPLICATE_ANSWER":
+        return text or "与已批改过的作答完全相同，请修改正文后再提交，或在「批改报告」查看上次结果。"
+    if code == "TIMEOUT":
+        return "模型响应超时，请稍后重试或更换更快的模型。"
+    if code == "UPSTREAM":
+        low = text.lower()
+        if "402" in text or "insufficient balance" in low:
+            return "模型账户余额不足，请在服务商控制台充值或更换 API Key，并在「AI 设置」中更新。"
+        if "400" in text:
+            return (
+                "模型接口参数有误。请检查「AI 设置」：Base URL 是否以 /v1 结尾、模型名是否与厂商一致，"
+                "并重新「测试连接」。"
+            )
+        if "401" in text or "403" in text:
+            return "API Key 无效或无权限，请在「AI 设置」中更新 Key。"
+        return "调用模型失败。请检查「AI 设置」中的 Key、Base URL、模型名与账户余额。"
+    if text and not re.search(r"request_id|UPSTREAM|ApiError", text, re.I):
+        return text
+    return "操作失败，请稍后重试。"
+
+
+def ai_error_storage_message(exc: AiCallError) -> str:
+    """写入 grading_job.error_message：保留 code 供前端分支，正文为用户可读。"""
+    return f"{exc.code}: {ai_error_user_message(exc.code, str(exc))}"
+
+
 def get_credential(db, user_id: str, role: CredentialRole) -> UserProviderCredential | None:
     return (
         db.query(UserProviderCredential)
@@ -57,6 +96,11 @@ def _raise_for_response(resp: httpx.Response, *, context: str) -> None:
         raise AiCallError("INVALID_KEY", "API Key 无效或无权限")
     if resp.status_code == 429:
         raise AiCallError("RATE_LIMIT", "请求过于频繁或余额不足")
+    if resp.status_code == 402:
+        raise AiCallError(
+            "INSUFFICIENT_BALANCE",
+            "模型账户余额不足（402）。请在模型服务商控制台充值或更换有余额的 API Key，并在「AI 设置」中更新。",
+        )
     if resp.status_code >= 400:
         hint = _upstream_message(resp)
         extra = f"：{hint}" if hint else ""

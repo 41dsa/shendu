@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 
+from app.domain.essay import official_essay_char_count
 from app.domain.scoring_engine.tiers import ScoringTier
 from app.domain.scoring_engine.types import CalibrationResult, EngineLayerTrace
 
@@ -73,7 +74,7 @@ def apply_calibration_with_text(
     paragraphs = split_paragraphs(essay_text)
     result = apply_calibration(
         total_score,
-        word_count=len(essay_text.strip()),
+        word_count=official_essay_char_count(essay_text),
         word_min=word_min,
         word_max=word_max,
         tier=tier,

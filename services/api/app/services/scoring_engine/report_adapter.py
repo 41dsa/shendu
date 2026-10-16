@@ -128,6 +128,7 @@ def evidence_chain_from_hit_dicts(
             earned = round(min(earned, mx), 2)
         pid = str(h.get("point_id") or "")
         label = str(h.get("label") or h.get("point_text") or pid).strip()
+        dim_id = str(h.get("dimension_id") or "")
         if len(label) > 48:
             label = label[:45] + "…"
         chain.append(
@@ -159,6 +160,7 @@ def point_hits_payload(hits: list[PointHit], points: list[ScoringPoint] | None =
         out.append(
             {
                 "point_id": h.point_id,
+                "dimension_id": (pt.dimension_id if pt else "") or "",
                 "label": _point_label(h.point_id, points),
                 "point_text": (pt.text if pt else "") or "",
                 "status": h.status,

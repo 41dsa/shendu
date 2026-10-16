@@ -5,6 +5,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from app.domain.custom_exam_level import exam_level_from_profile, normalize_exam_level
 from app.domain.exam_catalog import (
     exam_profile_display,
     get_exam_profile_form_options,
@@ -26,6 +27,12 @@ def main() -> None:
         job_category="shidi",
     )
     assert disp["mapped_bank_exam"] == "国考市地级"
+    assert disp["suggested_custom_exam_level"] == "municipal"
+    assert exam_level_from_profile(exam_type="guokao", job_category="fusheng") == "provincial"
+    assert exam_level_from_profile(exam_type="guokao", job_category="zhifa") == "enforcement"
+    assert exam_level_from_profile(exam_type="shengkao", job_category="zhifa") == "enforcement"
+    assert normalize_exam_level("provincial") == "provincial"
+    assert len(get_exam_profile_form_options().custom_exam_levels) == 3
     print("verify_exam_catalog: ok")
 
 

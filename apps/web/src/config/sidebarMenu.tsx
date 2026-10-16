@@ -3,7 +3,6 @@ import {
   FileTextOutlined,
   FundOutlined,
   HomeOutlined,
-  ReadOutlined,
   RollbackOutlined,
   SettingOutlined,
   ThunderboltOutlined,
@@ -17,7 +16,6 @@ type MenuItem = Required<MenuProps>["items"][number];
 const learnerItems: MenuItem[] = [
   { key: "/", icon: <HomeOutlined />, label: "首页" },
   { key: "/grading", icon: <EditOutlined />, label: "批改" },
-  { key: "/training", icon: <ReadOutlined />, label: "AI 训练" },
   { key: "/reports", icon: <FileTextOutlined />, label: "批改报告" },
   { key: "/abilities", icon: <FundOutlined />, label: "能力画像" },
   { key: "/issues", icon: <UnorderedListOutlined />, label: "问题本" },
@@ -51,7 +49,6 @@ export const ADMIN_BLOCKED_LEARNER_PATHS = [
   "/purchase",
   "/activate",
   "/settings/exam",
-  "/training",
   "/abilities",
   "/issues",
 ];

@@ -22,6 +22,21 @@ type FormOptions = {
   years: number[];
 };
 
+function normalizeJobCategory(
+  examType: string,
+  jobCategory: string | undefined,
+  options: FormOptions | undefined,
+): string {
+  if (examType === "guokao") {
+    const valid = (options?.guokao_jobs ?? []).map((j) => j.value);
+    if (jobCategory && valid.includes(jobCategory)) return jobCategory;
+    return "shidi";
+  }
+  const valid = (options?.shengkao_jobs ?? []).map((j) => j.value);
+  if (jobCategory && valid.includes(jobCategory)) return jobCategory;
+  return "xiangzhen";
+}
+
 export default function ExamProfilePage() {
   const qc = useQueryClient();
   const [form] = Form.useForm();
@@ -52,16 +67,21 @@ export default function ExamProfilePage() {
     onError: (e) => message.error(String(e)),
   });
 
-  const initial = useMemo(
-    () =>
-      data ?? {
-        exam_type: "shengkao",
-        province: "湖北",
-        year: options?.years?.[0] ?? 2027,
-        job_category: "xiangzhen",
-      },
-    [data, options?.years],
-  );
+  const initial = useMemo(() => {
+    const base = data ?? {
+      exam_type: "shengkao",
+      province: "湖北",
+      year: options?.years?.[0] ?? 2027,
+      job_category: "xiangzhen",
+    };
+    const examType = base.exam_type || "shengkao";
+    return {
+      ...base,
+      exam_type: examType,
+      province: examType === "guokao" ? "" : base.province || "湖北",
+      job_category: normalizeJobCategory(examType, base.job_category, options),
+    };
+  }, [data, options]);
 
   return (
     <Card title="考试目标">
@@ -83,7 +103,21 @@ export default function ExamProfilePage() {
             province: v.exam_type === "guokao" ? "" : v.province,
           })
         }
-        onValuesChange={() => {}}
+        onValuesChange={(changed, all) => {
+          if (!("exam_type" in changed)) return;
+          const et = changed.exam_type as string;
+          if (et === "guokao") {
+            form.setFieldsValue({
+              province: "",
+              job_category: normalizeJobCategory("guokao", all.job_category, options),
+            });
+          } else if (et === "shengkao") {
+            form.setFieldsValue({
+              province: all.province || "湖北",
+              job_category: normalizeJobCategory("shengkao", all.job_category, options),
+            });
+          }
+        }}
       >
         <Form.Item name="exam_type" label="考试类型" rules={[{ required: true }]}>
           <Select

@@ -177,6 +177,7 @@ async def run_scoring_engine_online(
     user_id: str,
     job_id: str,
     submission_id: str,
+    persist_hit_logs: bool = True,
 ) -> ScoringEngineResult | dict:
     level_id_peek, _ = resolve_exam_level(ctx)
     max_score = float(ctx.score)
@@ -247,7 +248,7 @@ async def run_scoring_engine_online(
                 EngineLayerTrace(layer="deliberation", detail="mares", data=deliberation)
             )
 
-    if settings.point_pool_pipeline_enabled:
+    if settings.point_pool_pipeline_enabled and persist_hit_logs:
         from app.services.scoring_engine.feedback_log import persist_point_hit_logs
 
         persist_point_hit_logs(

@@ -5,8 +5,11 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.deps import get_active_license, get_current_user
+from app.domain.custom_exam_level import exam_level_from_profile, normalize_exam_level
+from app.domain.essay import USER_ESSAY_QUESTION_ID
 from app.models.entities import (
     CredentialRole,
+    ExamProfile,
     GradingJob,
     GradingJobStatus,
     License,
@@ -15,7 +18,6 @@ from app.models.entities import (
     SubmissionStatus,
     User,
 )
-from app.domain.essay import USER_ESSAY_QUESTION_ID
 from app.schemas.submission import SubmissionResponse, SubmissionUpsert, SubmitGradingResponse
 from app.services.ai_client import get_credential
 from app.services.grading_limits import assert_grading_slot_available
@@ -75,11 +77,22 @@ def upsert_submission(
         if not db.get(Question, USER_ESSAY_QUESTION_ID):
             raise HTTPException(status_code=503, detail="服务未初始化，请联系管理员运行 init_db")
         material = (body.user_material or "").strip() or None
+        level = normalize_exam_level(body.exam_level)
+        if level is None:
+            profile = db.query(ExamProfile).filter(ExamProfile.user_id == user.id).first()
+            if profile:
+                level = exam_level_from_profile(
+                    exam_type=profile.exam_type or "",
+                    job_category=profile.job_category or "",
+                )
+            else:
+                level = "municipal"
         row = Submission(
             user_id=user.id,
             question_id=USER_ESSAY_QUESTION_ID,
             user_prompt=prompt,
             user_material=material,
+            exam_level=level,
             content=body.content,
             status=status,
         )
@@ -94,6 +107,7 @@ def upsert_submission(
         question_id=row.question_id,
         user_prompt=row.user_prompt,
         user_material=row.user_material,
+        exam_level=row.exam_level,
         content=row.content,
         status=row.status.value,
         attempt=row.attempt,

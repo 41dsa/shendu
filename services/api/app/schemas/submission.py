@@ -7,6 +7,10 @@ class SubmissionUpsert(BaseModel):
     question_id: str | None = None
     user_prompt: str | None = None
     user_material: str | None = None
+    exam_level: str | None = Field(
+        default=None,
+        description="自备题申论卷别：provincial | municipal | enforcement",
+    )
     content: str = ""
     status: str = "draft"
 
@@ -16,6 +20,7 @@ class SubmissionResponse(BaseModel):
     question_id: str
     user_prompt: str | None = None
     user_material: str | None = None
+    exam_level: str | None = None
     content: str
     status: str
     attempt: int

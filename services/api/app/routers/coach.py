@@ -19,24 +19,19 @@ from app.schemas.coach import (
     RetryContextResponse,
     RetrySubmitBody,
     RetrySubmitResponse,
-    TrainingCompleteBody,
-    TrainingStartBody,
 )
 from app.services.ai_client import get_credential
 from app.services.grading_limits import assert_grading_slot_available
 from app.services.coach_service import (
     aggregate_issue_book,
     build_home_summary,
-    compute_abilities,
-    get_retry_context,
-)
-from app.services.training_service import (
     build_me_summary,
-    build_training_plan,
-    complete_training_record,
-    skip_training_record,
-    start_training_record,
-    _record_to_dict,
+    compute_abilities,
+    count_essay_regrades,
+    essay_regrade_limit_message,
+    essay_regrade_root_id,
+    get_retry_context,
+    max_essay_regrade_count,
 )
 from app.worker.tasks import enqueue_grading_job
 
@@ -49,7 +44,7 @@ def home_summary(
     _lic: License = Depends(get_active_license),
     db: Session = Depends(get_db),
 ) -> dict:
-    """首页聚合：能力、重点问题、今日训练推荐、最近批改。"""
+    """首页聚合：能力、重点问题、最近批改。"""
     return build_home_summary(db, user.id)
 
 
@@ -67,8 +62,14 @@ def issue_book(
     user: User = Depends(get_current_user),
     _lic: License = Depends(get_active_license),
     db: Session = Depends(get_db),
+    ability_id: str | None = None,
+    limit: int = 80,
 ) -> list[dict]:
-    return aggregate_issue_book(db, user.id)
+    cap = max(1, min(limit, 100))
+    rows = aggregate_issue_book(db, user.id, limit=cap)
+    if ability_id:
+        rows = [r for r in rows if r.get("ability_id") == ability_id]
+    return rows
 
 
 @router.get("/reports/{report_id}/retry-context", response_model=RetryContextResponse)
@@ -115,22 +116,29 @@ def submit_retry(
     if not first_sub:
         raise HTTPException(status_code=400, detail="首次提交不存在")
 
-    # 链式 parent：始终指向「第一次」作答，便于多次重写对比到首稿
-    root_id = first_sub.parent_submission_id or first_sub.id
+    # 链式 parent：始终指向「第一次」作答
+    root_id = essay_regrade_root_id(first_sub)
     root = db.get(Submission, root_id)
-    attempt = (
-        db.query(Submission)
-        .filter(Submission.user_id == user.id, Submission.parent_submission_id == root_id)
-        .count()
-        + 2
-    )
+    regrade_count = count_essay_regrades(db, user.id, root_id)
+    max_regrades = max_essay_regrade_count(db, root_id)
+    if regrade_count >= max_regrades:
+        raise HTTPException(
+            status_code=400,
+            detail=essay_regrade_limit_message(db, root_id, regrade_count),
+        )
+    attempt = regrade_count + 2
+
+    from app.services.rewrite_demo_service import preserve_title_from_reference
+
+    reference_essay = (root.content if root else None) or first_sub.content or ""
+    retry_content = preserve_title_from_reference(reference_essay, body.content.strip())
 
     row = Submission(
         user_id=user.id,
         question_id=first_sub.question_id,
         user_prompt=first_sub.user_prompt,
         user_material=first_sub.user_material,
-        content=body.content.strip(),
+        content=retry_content,
         status=SubmissionStatus.submitted,
         attempt=attempt,
         parent_submission_id=root_id,
@@ -150,68 +158,6 @@ def submit_retry(
         submission_id=row.id,
         attempt=attempt,
     )
-
-
-@router.get("/training/plan")
-def training_plan(
-    user: User = Depends(get_current_user),
-    _lic: License = Depends(get_active_license),
-    db: Session = Depends(get_db),
-) -> dict:
-    """今日 / 专项推荐 + 最近训练记录（FE-505）。"""
-    return build_training_plan(db, user.id)
-
-
-@router.get("/training/records")
-def list_training_records(
-    user: User = Depends(get_current_user),
-    _lic: License = Depends(get_active_license),
-    db: Session = Depends(get_db),
-) -> list[dict]:
-    plan = build_training_plan(db, user.id)
-    return plan["records"]
-
-
-@router.post("/training/records")
-def create_training_record(
-    body: TrainingStartBody,
-    user: User = Depends(get_current_user),
-    _lic: License = Depends(get_active_license),
-    db: Session = Depends(get_db),
-) -> dict:
-    row = start_training_record(db, user.id, body.model_dump())
-    return _record_to_dict(row)
-
-
-@router.post("/training/records/{record_id}/complete")
-def finish_training_record(
-    record_id: str,
-    body: TrainingCompleteBody,
-    user: User = Depends(get_current_user),
-    _lic: License = Depends(get_active_license),
-    db: Session = Depends(get_db),
-) -> dict:
-    try:
-        row = complete_training_record(
-            db, user.id, record_id, body.result_note, body.linked_report_id
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail="训练记录不存在") from exc
-    return _record_to_dict(row)
-
-
-@router.post("/training/records/{record_id}/skip")
-def skip_training(
-    record_id: str,
-    user: User = Depends(get_current_user),
-    _lic: License = Depends(get_active_license),
-    db: Session = Depends(get_db),
-) -> dict:
-    try:
-        row = skip_training_record(db, user.id, record_id)
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail="训练记录不存在") from exc
-    return _record_to_dict(row)
 
 
 @router.get("/me")

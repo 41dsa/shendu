@@ -5,8 +5,10 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
+from app.domain.custom_exam_level import exam_level_from_profile, normalize_exam_level
 from app.domain.essay import DEFAULT_RUBRIC_DIMENSIONS, USER_ESSAY_QUESTION_ID, essay_word_bounds
-from app.models.entities import Question, QuestionType, Submission
+from app.domain.scoring_engine.level_config import ExamLevelId
+from app.models.entities import ExamProfile, Question, QuestionType, Submission
 from app.services.standard_engine.exam_standard_service import get_active_exam_standard
 from app.services.standard_engine.custom_essay_standard import get_cached_custom_payload
 from app.services.standard_engine.standard_store import (
@@ -36,6 +38,7 @@ class EssayGradingContext:
     exam_standard_version: int | None = None
     question_id: str = ""
     point_pools: dict[str, Any] | None = None
+    exam_level: ExamLevelId | None = None
 
 
 def resolve_essay_context(
@@ -106,6 +109,17 @@ def resolve_essay_context(
     if custom:
         cache_key = f"custom:{prompt[:400]}|{(material or '')[:400]}"
 
+    resolved_level: ExamLevelId | None = None
+    if custom:
+        resolved_level = normalize_exam_level(getattr(submission, "exam_level", None))
+        if resolved_level is None and db is not None:
+            profile = db.query(ExamProfile).filter(ExamProfile.user_id == submission.user_id).first()
+            if profile:
+                resolved_level = exam_level_from_profile(
+                    exam_type=profile.exam_type or "",
+                    job_category=profile.job_category or "",
+                )
+
     return EssayGradingContext(
         title=title,
         prompt=prompt or (material or ""),
@@ -125,6 +139,7 @@ def resolve_essay_context(
         exam_standard_version=exam_standard_version,
         question_id=question.id,
         point_pools=point_pools,
+        exam_level=resolved_level,
     )
 
 

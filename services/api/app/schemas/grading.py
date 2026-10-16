@@ -9,6 +9,7 @@ class GradingJobSubmissionSnapshot(BaseModel):
     is_custom: bool
     user_prompt: str | None = None
     user_material: str | None = None
+    exam_level: str | None = None
     content: str = ""
 
 
@@ -43,11 +44,20 @@ class ReportSubmissionSnapshot(BaseModel):
     content: str = ""
     user_prompt: str | None = None
     user_material: str | None = None
+    question_title: str | None = None
+    is_custom: bool = False
+    attempt: int = 1
 
 
 class RewriteDemoResponse(BaseModel):
     report_id: str
     rewrite_demo: dict
+    payload: dict
+
+
+class ReferenceSampleResponse(BaseModel):
+    report_id: str
+    reference_sample: dict
     payload: dict
 
 

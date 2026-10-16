@@ -5,6 +5,9 @@ from app.services.essay_context import EssayGradingContext
 
 
 def resolve_exam_level(ctx: EssayGradingContext) -> tuple[ExamLevelId, bool]:
+    if ctx.exam_level:
+        return ctx.exam_level, False
+
     inferred = True
     level: ExamLevelId = "municipal"
     texts: list[str] = []

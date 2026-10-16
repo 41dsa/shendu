@@ -127,6 +127,8 @@ def ensure_submission_columns() -> None:
             conn.execute(text("ALTER TABLE submissions ADD COLUMN user_prompt TEXT"))
         if "user_material" not in cols:
             conn.execute(text("ALTER TABLE submissions ADD COLUMN user_material TEXT"))
+        if "exam_level" not in cols:
+            conn.execute(text("ALTER TABLE submissions ADD COLUMN exam_level VARCHAR(32)"))
 
 
 def upsert_user_essay_placeholder(db) -> None:

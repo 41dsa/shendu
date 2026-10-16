@@ -13,3 +13,4 @@ class ExamProfileResponse(ExamProfileUpsert):
     summary: str | None = None
     mapped_bank_exam: str | None = None
     mapped_bank_year: int | None = None
+    suggested_custom_exam_level: str | None = None

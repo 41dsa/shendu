@@ -49,6 +49,10 @@ def main() -> None:
     result = run_scoring_engine(_ctx(), essay)
     assert not isinstance(result, dict)
     assert result.exam_level == "provincial"
+    enforced = run_scoring_engine(_ctx(exam_level="enforcement"), essay)
+    assert not isinstance(enforced, dict)
+    assert enforced.exam_level == "enforcement"
+    assert enforced.level_inferred is False
     assert 0 <= result.total_score <= 40
     assert result.dimension_rows
     assert result.tier.tier_id
@@ -83,6 +87,25 @@ def main() -> None:
     )
     assert merged["total_score"] == 31.5, merged
     assert merged.get("engine_total_discarded") is True
+
+    from dataclasses import replace
+
+    engine_low = replace(engine_zero, total_score=3.3)
+    llm_mid = normalize_llm_report_payload(
+        {
+            "total_score": 31.0,
+            "scoring_points": [
+                {"label": "立意与观点", "earned": 7.8, "max": 10, "hit": "partial"},
+                {"label": "结构与层次", "earned": 7.5, "max": 10, "hit": "partial"},
+                {"label": "论证与素材", "earned": 7.6, "max": 10, "hit": "partial"},
+                {"label": "语言表达", "earned": 8.1, "max": 10, "hit": "partial"},
+            ],
+            "review_notes": "因此止步二类中段，难以进入一类。",
+        },
+    )
+    merged2 = merge_engine_with_llm_payload(engine_low, llm_mid, max_llm_delta=4.0, max_score=40.0)
+    assert merged2["total_score"] == 31.0, merged2
+    assert merged2.get("engine_total_discarded") is True
 
     print("verify_scoring_engine: ok")
 

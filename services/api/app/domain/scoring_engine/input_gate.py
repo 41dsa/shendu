@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from app.domain.essay import essay_length_ratio
+from app.domain.essay import essay_length_ratio, official_essay_char_count
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -21,8 +21,9 @@ class GateDecision:
 def run_input_gate(ctx: "EssayGradingContext", content: str) -> GateDecision:
     text = content.strip()
     word_min, word_max = _word_bounds(ctx)
-    word_ratio = essay_length_ratio(len(text), word_min)
-    if len(text) < 10:
+    char_count = official_essay_char_count(text)
+    word_ratio = essay_length_ratio(char_count, word_min)
+    if char_count < 10:
         return GateDecision(False, "作文过短", word_ratio, _short_payload(ctx, "作文过短", word_ratio))
     if word_ratio < 0.3:
         reason = f"字数不足（低于建议字数 {word_min} 字的约 30%）"

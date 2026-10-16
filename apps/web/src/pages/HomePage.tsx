@@ -66,7 +66,6 @@ export default function HomePage() {
     queryFn: () =>
       api<{
         focus_issue?: { label: string; count: number };
-        today_training?: { title: string; reason: string; progress_done: number; progress_target: number };
         abilities?: { overall: number | null; dimensions: { name: string; score: number | null }[] };
         recent_reports?: ReportItem[];
       }>("/coach/home"),
@@ -105,7 +104,6 @@ export default function HomePage() {
   const issues = (payload.issues as Issue[] | undefined)?.slice(0, 2) ?? [];
   const recent = coachHome?.recent_reports ?? reports?.slice(0, 3) ?? [];
   const focusFromCoach = coachHome?.focus_issue;
-  const training = coachHome?.today_training;
 
   return (
     <Space direction="vertical" size="large" style={{ width: "100%" }}>
@@ -162,21 +160,6 @@ export default function HomePage() {
           }
           showIcon
         />
-      )}
-
-      {training && licensed && (
-        <Card title="今日训练（推荐）" extra={<Tag>{training.progress_done}/{training.progress_target}</Tag>}>
-          <Typography.Text strong>{training.title}</Typography.Text>
-          <Typography.Paragraph type="secondary">{training.reason}</Typography.Paragraph>
-          <Space>
-            <Button type="primary">
-              <Link to="/training">去训练</Link>
-            </Button>
-            <Button>
-              <Link to="/grading">去批改</Link>
-            </Button>
-          </Space>
-        </Card>
       )}
 
       <Row gutter={16}>

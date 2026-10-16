@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 GUOKAO_JOB_OPTIONS = [
     {"value": "shidi", "label": "市地级及以下", "bank_exam": "国考市地级"},
     {"value": "fusheng", "label": "副省级 / 中央机关", "bank_exam": "国考副省级"},
+    {"value": "zhifa", "label": "行政执法类", "bank_exam": "国考行政执法类"},
 ]
 
 SHENGKAO_PROVINCES = [
@@ -64,15 +65,19 @@ class ExamProfileFormOptions(BaseModel):
     shengkao_jobs: list[dict[str, str]]
     provinces: list[str]
     years: list[int]
+    custom_exam_levels: list[dict[str, str]] = Field(default_factory=list)
 
 
 def get_exam_profile_form_options() -> ExamProfileFormOptions:
+    from app.domain.custom_exam_level import custom_exam_level_form_options
+
     return ExamProfileFormOptions(
         exam_types=[{"value": o["value"], "label": o["label"]} for o in EXAM_TYPE_OPTIONS],
         guokao_jobs=[{"value": o["value"], "label": o["label"]} for o in GUOKAO_JOB_OPTIONS],
         shengkao_jobs=[{"value": o["value"], "label": o["label"]} for o in SHENGKAO_JOB_OPTIONS],
         provinces=list(SHENGKAO_PROVINCES),
         years=list(DEFAULT_YEARS),
+        custom_exam_levels=custom_exam_level_form_options(),
     )
 
 
@@ -101,7 +106,7 @@ def normalize_exam_type(raw: str) -> str:
 def normalize_job_category(exam_type: str, job_category: str) -> str:
     jc = (job_category or "").strip()
     if exam_type == "guokao":
-        if jc in ("shidi", "fusheng"):
+        if jc in ("shidi", "fusheng", "zhifa"):
             return jc
         if any(k in jc for k in ("副省", "中央", "省级")):
             return "fusheng"
@@ -146,6 +151,8 @@ def exam_profile_display(
     else:
         job_label = next((o["label"] for o in SHENGKAO_JOB_OPTIONS if o["value"] == job), job_category)
         summary = f"{type_label} · {province} · {job_label} · {year}"
+    from app.domain.custom_exam_level import exam_level_from_profile
+
     return {
         "exam_type": et,
         "province": province,
@@ -154,4 +161,5 @@ def exam_profile_display(
         "summary": summary,
         "mapped_bank_exam": bank,
         "mapped_bank_year": year,
+        "suggested_custom_exam_level": exam_level_from_profile(exam_type=et, job_category=job),
     }

@@ -1,6 +1,29 @@
+import { locateInEssay } from "./essayLocate";
+
 export type KeepSegment = { quote: string; reason?: string };
 
-export type HighlightRange = { start: number; end: number; reason?: string; segmentIndex?: number };
+export type EditSegmentLike = {
+  quote?: string;
+  source_quote?: string;
+  reason?: string;
+};
+
+function rangeForSegmentQuote(content: string, quote: string, reason?: string): HighlightRange | null {
+  const q = quote.trim();
+  if (q.length < 4) return null;
+  const hit = locateInEssay(content, [q], { reason });
+  if (hit) return hit;
+  return null;
+}
+
+export type HighlightRange = {
+  start: number;
+  end: number;
+  reason?: string;
+  segmentIndex?: number;
+  /** 参考范文：段首分论点句（与采分点橙标区分） */
+  variant?: "thesis_lead" | "mark";
+};
 
 export type TextSpan = { start: number; end: number; reason?: string };
 
@@ -23,16 +46,59 @@ export function segmentRangesWithIndex(content: string, segments: KeepSegment[])
   const seen = new Set<string>();
   segments.forEach((seg, idx) => {
     const quote = (seg.quote || "").trim();
-    if (quote.length < 4) return;
-    const start = content.indexOf(quote);
-    if (start < 0) return;
-    const end = start + quote.length;
-    const key = `${start}:${end}`;
+    const hit = rangeForSegmentQuote(content, quote, seg.reason);
+    if (!hit) return;
+    const key = `${hit.start}:${hit.end}:${idx + 1}`;
     if (seen.has(key)) return;
     seen.add(key);
-    ranges.push({ start, end, reason: seg.reason, segmentIndex: idx + 1 });
+    ranges.push({ ...hit, reason: seg.reason, segmentIndex: idx + 1 });
   });
-  ranges.sort((a, b) => a.start - b.start);
+  return ranges;
+}
+
+function inferSourceQuoteFromLinePair(original: string, rewrite: string, editQuote: string): string {
+  const q = editQuote.trim();
+  if (q.length < 4 || !rewrite || !original) return "";
+  const rPos = rewrite.indexOf(q);
+  if (rPos < 0) return "";
+  const origLines = original.split("\n");
+  const rewLines = rewrite.split("\n");
+  if (origLines.length !== rewLines.length) return "";
+  let cursor = 0;
+  for (let i = 0; i < rewLines.length; i++) {
+    const lineEnd = cursor + rewLines[i].length;
+    if (rPos >= cursor && rPos < lineEnd + 1) {
+      const oLine = origLines[i]?.trim() ?? "";
+      const rLine = rewLines[i]?.trim() ?? "";
+      if (oLine.length >= 4 && oLine !== rLine) return oLine;
+      return "";
+    }
+    cursor = lineEnd + 1;
+  }
+  return "";
+}
+
+/** 左侧原文：与 edit_segments 同序号的 source_quote 区间 */
+export function segmentSourceRangesWithIndex(
+  content: string,
+  segments: EditSegmentLike[],
+  pairedRewrite?: string,
+): HighlightRange[] {
+  const ranges: HighlightRange[] = [];
+  const seen = new Set<string>();
+  segments.forEach((seg, idx) => {
+    let quote = (seg.source_quote || "").trim();
+    if (quote.length < 4 && pairedRewrite && seg.quote) {
+      quote = inferSourceQuoteFromLinePair(content, pairedRewrite, seg.quote.trim());
+    }
+    if (quote.length < 4) return;
+    const hit = rangeForSegmentQuote(content, quote, seg.reason);
+    if (!hit) return;
+    const key = `${hit.start}:${hit.end}:${idx + 1}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    ranges.push({ ...hit, reason: seg.reason, segmentIndex: idx + 1 });
+  });
   return ranges;
 }
 
@@ -64,7 +130,13 @@ export function findKeepRanges(content: string, segments: KeepSegment[]): Highli
   return merged;
 }
 
-export type HighlightPiece = { text: string; highlight: boolean; reason?: string; segmentIndex?: number };
+export type HighlightPiece = {
+  text: string;
+  highlight: boolean;
+  reason?: string;
+  segmentIndex?: number;
+  variant?: "thesis_lead" | "mark";
+};
 
 export function highlightCoverageRatio(content: string, ranges: HighlightRange[]): number {
   if (!content.length || !ranges.length) return 0;
@@ -75,7 +147,7 @@ export function highlightCoverageRatio(content: string, ranges: HighlightRange[]
   return covered / content.length;
 }
 
-function mergeHighlightRanges(ranges: HighlightRange[]): HighlightRange[] {
+export function mergeHighlightRanges(ranges: HighlightRange[]): HighlightRange[] {
   if (!ranges.length) return [];
   const sorted = [...ranges].sort((a, b) => a.start - b.start);
   const merged: HighlightRange[] = [{ ...sorted[0] }];
@@ -123,6 +195,7 @@ export function splitForHighlight(content: string, ranges: HighlightRange[]): Hi
         highlight: true,
         reason: r.reason,
         segmentIndex: r.segmentIndex,
+        variant: r.variant,
       });
     }
     cursor = Math.max(cursor, r.end);

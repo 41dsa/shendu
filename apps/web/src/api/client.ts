@@ -2,7 +2,13 @@ import { parseApiError } from "./errors";
 
 const TOKEN_KEY = "shendu_token";
 
-export { ApiError, getApiErrorCode, showApiError } from "./errors";
+export {
+  ApiError,
+  formatApiErrorMessage,
+  formatUserFacingError,
+  getApiErrorCode,
+  showApiError,
+} from "./errors";
 
 export function getToken(): string | null {
   return localStorage.getItem(TOKEN_KEY);

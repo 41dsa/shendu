@@ -160,6 +160,7 @@ class Submission(Base):
     question_id: Mapped[str] = mapped_column(ForeignKey("questions.id"), index=True)
     user_prompt: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     user_material: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    exam_level: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     content: Mapped[str] = mapped_column(Text, default="")
     status: Mapped[SubmissionStatus] = mapped_column(Enum(SubmissionStatus), default=SubmissionStatus.draft)
     attempt: Mapped[int] = mapped_column(Integer, default=1)
@@ -246,47 +247,6 @@ class ScoringPointHitLog(Base):
     point_pool_version: Mapped[str] = mapped_column(String(16), default="1.0.0")
     payload: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-
-
-class TrainingLevel(str, enum.Enum):
-    L1 = "L1"
-    L2 = "L2"
-    L3 = "L3"
-
-
-class TrainingKind(str, enum.Enum):
-    today = "today"
-    special = "special"
-    issue = "issue"
-
-
-class TrainingRecordStatus(str, enum.Enum):
-    pending = "pending"
-    completed = "completed"
-    skipped = "skipped"
-
-
-class TrainingRecord(Base):
-    """用户训练记录（BE-506）：今日/专项/问题训练的可追踪单元。"""
-
-    __tablename__ = "training_records"
-
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
-    kind: Mapped[TrainingKind] = mapped_column(Enum(TrainingKind))
-    title: Mapped[str] = mapped_column(String(255))
-    ability_id: Mapped[Optional[str]] = mapped_column(String(8), nullable=True)
-    level: Mapped[TrainingLevel] = mapped_column(Enum(TrainingLevel), default=TrainingLevel.L1)
-    focus_tag: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
-    status: Mapped[TrainingRecordStatus] = mapped_column(
-        Enum(TrainingRecordStatus), default=TrainingRecordStatus.pending
-    )
-    instructions: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    result_note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    linked_report_id: Mapped[Optional[str]] = mapped_column(ForeignKey("reports.id"), nullable=True)
-    question_id: Mapped[Optional[str]] = mapped_column(ForeignKey("questions.id"), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class PromptPurpose(str, enum.Enum):

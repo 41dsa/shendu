@@ -26,6 +26,7 @@ def _to_response(row: ExamProfile) -> ExamProfileResponse:
         summary=meta["summary"],
         mapped_bank_exam=meta["mapped_bank_exam"],
         mapped_bank_year=meta["mapped_bank_year"],
+        suggested_custom_exam_level=meta.get("suggested_custom_exam_level"),
     )
 
 

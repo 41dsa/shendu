@@ -179,3 +179,79 @@ def point_hits_payload(hits: list[PointHit], points: list[ScoringPoint] | None =
 
 def tier_summary(tier: ScoringTier) -> str:
     return f"{tier.label}（{tier.reason}）"
+
+
+_LEVEL_TO_RATIO = {"L4": 0.92, "L3": 0.78, "L2": 0.58, "L1": 0.38, "L0": 0.12}
+
+
+def trait_rows_as_scoring_points(
+    trait_payload: list[dict[str, Any]],
+    *,
+    max_score: float,
+) -> list[dict[str, Any]]:
+    """兼容报告 API：以 Trait 诊断填充 scoring_points 形态。"""
+    per = max_score / max(len(trait_payload), 1)
+    rows: list[dict[str, Any]] = []
+    for t in trait_payload:
+        level = str(t.get("level") or "L2")
+        ratio = _LEVEL_TO_RATIO.get(level, 0.5)
+        earned = round(per * ratio, 2) if t.get("participates_in_score") else 0.0
+        mx = round(per, 2) if t.get("participates_in_score") else 0.0
+        hit = "full" if ratio >= 0.85 else "partial" if ratio >= 0.5 else "miss"
+        if not t.get("participates_in_score"):
+            hit = "miss"
+        rows.append(
+            {
+                "id": t.get("trait_id"),
+                "label": t.get("name"),
+                "earned": earned,
+                "max": mx,
+                "hit": hit,
+                "reason": t.get("conclusion") or "",
+                "trait_level": level,
+                "evidence_ref": (t.get("evidence_positive") or [None])[0],
+                "participates_in_score": t.get("participates_in_score"),
+            }
+        )
+    return rows
+
+
+def evidence_chain_from_traits(trait_payload: list[dict[str, Any]], *, limit: int = 8) -> list[dict[str, Any]]:
+    chain: list[dict[str, Any]] = []
+    for t in trait_payload:
+        pos = t.get("evidence_positive") or []
+        if not pos:
+            continue
+        quote = str(pos[0])
+        chain.append(
+            {
+                "criterion_id": t.get("trait_id"),
+                "label": t.get("name"),
+                "hit": "partial",
+                "user_quote": quote,
+                "material_ref": "",
+                "earned": 0,
+                "max": 0,
+                "reason": t.get("conclusion") or "",
+            }
+        )
+        if len(chain) >= limit:
+            break
+    return chain
+
+
+def tier_from_ability(ability_level: str, max_score: float) -> ScoringTier:
+    from app.domain.scoring_engine.level_config import _base_tiers
+
+    tiers = _base_tiers(max_score)
+    mapping = {"强": 0, "较强": 1, "一般": 2, "较弱": 3, "严重缺失": 4}
+    idx = mapping.get(ability_level, 2)
+    idx = min(idx, len(tiers) - 1)
+    rule = tiers[idx]
+    return ScoringTier(
+        tier_id=str(rule["tier_id"]),
+        label=str(rule["label"]),
+        score_min=float(rule["score_min"]),
+        score_max=float(rule["score_max"]),
+        reason=f"Trait 引擎能力等级：{ability_level}",
+    )

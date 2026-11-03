@@ -23,6 +23,7 @@ import { showApiError } from "../api/errors";
 import GradingJobPanel, { type GradingJobSubmissionSnapshot } from "../components/GradingJobPanel";
 import GradingQueuePanel from "../components/GradingQueuePanel";
 import ActivationRequiredNotice from "../components/ActivationRequiredNotice";
+import PrdNonOfficialNotice from "../components/PrdNonOfficialNotice";
 import { useEntitlement } from "../hooks/useEntitlement";
 import { countShenlunBodyChars } from "../utils/essayCharCount";
 
@@ -343,6 +344,7 @@ export default function GradingPage() {
 
       {!gradingInProgress ? (
       <>
+      <PrdNonOfficialNotice compact style={{ display: "block", marginBottom: 12 }} />
       <Card size="small" style={{ marginBottom: 16 }}>
         <Space direction="vertical" style={{ width: "100%" }}>
           <Radio.Group

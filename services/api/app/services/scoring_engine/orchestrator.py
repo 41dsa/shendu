@@ -1,176 +1,53 @@
-"""五层评分引擎编排：闸门 → 级别适配 → 确定性评分 → 审议标记 → 校准 → 报告适配。"""
+"""PRD V1 诊断标准执行器编排（Trait 引擎为批改唯一脊柱；采分点池仅标准生产遗留）。"""
 
 from __future__ import annotations
 
-from sqlalchemy.orm import Session
+from typing import TYPE_CHECKING
 
-from app.config import settings
-from app.domain.scoring_engine.calibration import apply_calibration_with_text
+from app.domain.essay_grading_context import EssayGradingContext
 from app.domain.scoring_engine.input_gate import run_input_gate
-from app.domain.scoring_engine.level_config import LEVEL_CONFIG_VERSION, ExamLevelId, get_level_config
-from app.domain.scoring_engine.types import DeterministicScoreResult, EngineLayerTrace, ScoringEngineResult, ScoringPoint
-from app.services.essay_context import EssayGradingContext, word_bounds_for_context
-from app.services.scoring_engine.arbitration import arbitrate_borderline_hits
-from app.services.scoring_engine.deliberation import should_trigger_deliberation
-from app.services.scoring_engine.deliberation_mares import apply_deliberation_to_result, run_deliberation_mares
-from app.services.scoring_engine.deterministic import run_deterministic_engine
+from app.domain.scoring_engine.level_config import LEVEL_CONFIG_VERSION
+from app.domain.scoring_engine.types import EngineLayerTrace, ScoringEngineResult
+from app.domain.scoring_engine.v1_engine import build_engine_result
 from app.services.scoring_engine.level_resolver import resolve_exam_level
-from app.services.scoring_engine.point_pool import POINT_POOL_VERSION, build_point_pool
-from app.services.scoring_engine.pool_loader import atomic_points_to_scoring_points, load_point_pool_for_level
-from app.domain.scoring_engine.similarity_provider import SimilarityProvider
-from app.services.embedding_service import build_similarity_provider
-from app.services.scoring_engine.recompute import recompute_from_hits
-from app.services.scoring_engine.report_adapter import (
-    dimension_rows_from_engine,
-    evidence_chain_from_hits,
-    point_hits_payload,
-    tier_summary,
-)
 
-
-def _resolve_point_pool(
-    ctx: EssayGradingContext,
-    level_id: ExamLevelId,
-    max_score: float,
-) -> tuple[list[ScoringPoint], str, str]:
-    if ctx.point_pools:
-        pool = load_point_pool_for_level(
-            {"point_pools": ctx.point_pools},
-            level_id,
-            question_id=ctx.question_id or None,
-        )
-        if pool and pool.points:
-            return atomic_points_to_scoring_points(pool, level_id), pool.version, "published_point_pool"
-    legacy = build_point_pool(
-        rubric_criteria=ctx.rubric_criteria,
-        scoring_dimensions=ctx.scoring_points,
-        focus_points=ctx.focus_points,
-        level_id=level_id,
-        max_score=max_score,
-    )
-    return legacy, POINT_POOL_VERSION, "rubric_adapter"
-
-
-def _finalize_result(
-    ctx: EssayGradingContext,
-    content: str,
-    *,
-    level_id: ExamLevelId,
-    level_inferred: bool,
-    level_config,
-    det: DeterministicScoreResult,
-    pool_version: str,
-    pool_source: str,
-    traces: list[EngineLayerTrace],
-    gate_word_ratio: float,
-    points: list[ScoringPoint],
-) -> ScoringEngineResult:
-    max_score = float(ctx.score)
-    deliberation, note = should_trigger_deliberation(det, level_config)
-    if deliberation:
-        traces.append(EngineLayerTrace(layer="deliberation", detail="triggered", data={"note": note}))
-
-    word_min, word_max = word_bounds_for_context(ctx)
-    cal = apply_calibration_with_text(
-        det.base_score,
-        content,
-        word_min=word_min,
-        word_max=word_max,
-        tier=det.tier,
-        exam_level=level_id,
-    )
-    traces.extend(cal.traces)
-    tier = cal.tier_adjusted or det.tier
-    total = round(max(0.0, min(max_score, det.base_score + cal.total_penalty)), 1)
-
-    return ScoringEngineResult(
-        exam_level=level_id,
-        level_inferred=level_inferred,
-        level_config_version=LEVEL_CONFIG_VERSION,
-        point_pool_version=pool_version,
-        total_score=total,
-        max_score=max_score,
-        tier=tier,
-        dimension_rows=dimension_rows_from_engine(det.dimension_scores, ctx.scoring_points),
-        point_hits=det.point_hits,
-        penalties=cal.penalties,
-        confidence=_engine_confidence(det, deliberation, gate_word_ratio),
-        level_specific_feedback=level_config.ability_focus_note,
-        evidence_chain=evidence_chain_from_hits(det.point_hits, points=points),
-        engine_traces=traces
-        + [EngineLayerTrace(layer="point_pool", detail=pool_source, data={"version": pool_version})],
-        deliberation_triggered=deliberation,
-        deliberation_note=note,
-        pool_points=list(points),
-    )
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
+from app.services.scoring_engine.report_adapter import point_hits_payload, tier_summary
 
 
 def run_scoring_engine(
     ctx: EssayGradingContext,
     content: str,
-    *,
-    similarity_provider: SimilarityProvider | None = None,
-) -> ScoringEngineResult | dict:
-    return _run_scoring_engine_core(ctx, content, similarity_provider=similarity_provider)
-
-
-def _run_scoring_engine_core(
-    ctx: EssayGradingContext,
-    content: str,
-    *,
-    similarity_provider: SimilarityProvider | None = None,
+    **_,
 ) -> ScoringEngineResult | dict:
     gate = run_input_gate(ctx, content)
     if not gate.passed and gate.short_circuit_payload:
         return gate.short_circuit_payload
 
     level_id, level_inferred = resolve_exam_level(ctx)
-    max_score = float(ctx.score)
-    level_config = get_level_config(level_id, max_score=max_score)
-    traces: list[EngineLayerTrace] = [
+    from app.domain.scoring_engine.types import EngineLayerTrace
+
+    traces = [
         EngineLayerTrace(layer="input_gate", detail="passed", data={"word_ratio": gate.word_ratio}),
         EngineLayerTrace(
-            layer="level_adapter",
+            layer="exam_context",
             detail=level_id,
             data={"level_inferred": level_inferred, "config_version": LEVEL_CONFIG_VERSION},
         ),
     ]
-    if similarity_provider:
-        traces.append(
-            EngineLayerTrace(
-                layer="embedding",
-                detail=similarity_provider.backend,
-                data={"model": similarity_provider.model},
-            )
-        )
-
-    pool, pool_version, pool_source = _resolve_point_pool(ctx, level_id, max_score)
-    det = run_deterministic_engine(
-        content,
-        pool,
-        level_config,
-        max_score=max_score,
-        scoring_dimensions=ctx.scoring_points,
-        similarity_provider=similarity_provider,
-    )
-    traces.extend(det.traces)
-    return _finalize_result(
+    return build_engine_result(
         ctx,
         content,
-        level_id=level_id,
+        exam_level=level_id,
         level_inferred=level_inferred,
-        level_config=level_config,
-        det=det,
-        pool_version=pool_version,
-        pool_source=pool_source,
+        word_ratio=gate.word_ratio,
         traces=traces,
-        gate_word_ratio=gate.word_ratio,
-        points=pool,
     )
 
 
 async def run_scoring_engine_online(
-    db: Session,
+    db: "Session",
     ctx: EssayGradingContext,
     content: str,
     *,
@@ -179,90 +56,176 @@ async def run_scoring_engine_online(
     submission_id: str,
     persist_hit_logs: bool = True,
 ) -> ScoringEngineResult | dict:
-    level_id_peek, _ = resolve_exam_level(ctx)
-    max_score = float(ctx.score)
-    pool, pool_version, pool_source = _resolve_point_pool(ctx, level_id_peek, max_score)
-    similarity_provider = await build_similarity_provider(
-        db,
-        user_id=user_id,
-        essay=content,
-        points=pool,
+    from app.config import settings
+    from app.domain.scoring_engine.input_gate import run_input_gate
+    from app.domain.scoring_engine.rebuild_result import (
+        rebuild_engine_after_llm_evidence,
+        rebuild_engine_after_trait_votes,
     )
-    base = _run_scoring_engine_core(ctx, content, similarity_provider=similarity_provider)
-    if isinstance(base, dict):
-        return base
+    from app.domain.scoring_engine.trait_vote_merge import apply_vote_levels
+    from app.services.scoring_engine.trait_evidence_llm import collect_trait_evidence_llm
+    from app.services.scoring_engine.trait_voting import collect_trait_votes
+    from app.services.scoring_engine.level_resolver import resolve_exam_level
 
-    level_id = base.exam_level  # type: ignore[assignment]
-    level_config = get_level_config(level_id, max_score=max_score)
-
-    hits = await arbitrate_borderline_hits(
-        db,
-        user_id=user_id,
-        job_id=job_id,
-        essay=content,
-        hits=base.point_hits,
-        points=pool,
+    from app.services.anchor_scale_service import (
+        count_published_anchors,
+        essay_trait_levels_from_diagnostics,
+        nearest_anchor_match,
     )
-    if hits != base.point_hits:
-        det = recompute_from_hits(
-            hits,
-            pool,
-            level_config,
-            max_score=max_score,
-            scoring_dimensions=ctx.scoring_points,
-        )
-        base = _finalize_result(
-            ctx,
-            content,
-            level_id=level_id,
-            level_inferred=base.level_inferred,
-            level_config=level_config,
-            det=det,
-            pool_version=pool_version,
-            pool_source=pool_source + "+arbitration",
-            traces=list(base.engine_traces),
-            gate_word_ratio=1.0,
-            points=pool,
-        )
 
-    if base.deliberation_triggered:
-        det_for_delib = recompute_from_hits(
-            base.point_hits,
-            pool,
-            level_config,
-            max_score=max_score,
-            scoring_dimensions=ctx.scoring_points,
-        )
-        deliberation = await run_deliberation_mares(
+    from app.domain.scoring_engine.question_standard_card import build_question_standard_card
+
+    standard_card = build_question_standard_card(ctx)
+    std_match_confidence = float(standard_card.match_confidence)
+
+    if ctx.question_id:
+        ctx.anchor_count = count_published_anchors(db, ctx.question_id)
+
+    result = run_scoring_engine(ctx, content)
+    if isinstance(result, dict):
+        return result
+
+    gate = run_input_gate(ctx, content)
+    level_id, level_inferred = resolve_exam_level(ctx)
+
+    if settings.trait_llm_evidence_enabled:
+        llm_evidence = await collect_trait_evidence_llm(
             db,
             user_id=user_id,
-            job_id=job_id,
-            exam_level=level_id,
-            essay_excerpt=content,
-            det=det_for_delib,
-            max_score=max_score,
+            ctx=ctx,
+            essay=content,
         )
-        base = apply_deliberation_to_result(base, deliberation)
-        if deliberation:
-            base.engine_traces.append(
-                EngineLayerTrace(layer="deliberation", detail="mares", data=deliberation)
+        if llm_evidence:
+            result = rebuild_engine_after_llm_evidence(
+                ctx,
+                content,
+                result,
+                llm_evidence,
+                word_ratio=gate.word_ratio,
+                exam_level=level_id,
+                level_inferred=level_inferred,
             )
 
-    if settings.point_pool_pipeline_enabled and persist_hit_logs:
-        from app.services.scoring_engine.feedback_log import persist_point_hit_logs
+    if settings.trait_llm_voting_enabled and result.trait_diagnostics:
+        vote_map, max_spread, vote_evidence = await collect_trait_votes(
+            db,
+            user_id=user_id,
+            ctx=ctx,
+            essay=content,
+            base_diagnostics=result.trait_diagnostics,
+        )
+        if vote_evidence:
+            result = rebuild_engine_after_llm_evidence(
+                ctx,
+                content,
+                result,
+                vote_evidence,
+                word_ratio=gate.word_ratio,
+                exam_level=level_id,
+                level_inferred=level_inferred,
+            )
+            result.engine_traces.append(
+                EngineLayerTrace(
+                    layer="evidence_llm",
+                    detail="vote_models_merged",
+                    data={"traits": len(vote_evidence)},
+                )
+            )
+        if vote_map:
+            rows = apply_vote_levels(result.trait_diagnostics, vote_map)
 
-        persist_point_hit_logs(
+            result = rebuild_engine_after_trait_votes(
+                result,
+                rows,
+                standard_match_confidence=std_match_confidence,
+                word_ratio=gate.word_ratio,
+                vote_max_spread=max_spread,
+                severe_off_topic=bool(result.hard_rule_flags.get("severe_off_topic")),
+                standard=standard_card,
+            )
+            result.engine_traces.append(
+                EngineLayerTrace(
+                    layer="trait_voting",
+                    detail="merged",
+                    data={"max_spread": max_spread, "traits": len(vote_map)},
+                )
+            )
+
+    if persist_hit_logs:
+        from app.config import settings
+        from app.services.scoring_engine.feedback_log import persist_trait_scoring_records
+
+        persist_trait_scoring_records(
             db,
             grading_job_id=job_id,
             submission_id=submission_id,
             question_id=ctx.question_id or submission_id,
-            result=base,
+            result=result,
         )
+        if settings.weak_supervision_enabled and result.trait_diagnostics:
+            from app.services.active_learning_pool import enqueue_active_learning
 
-    return base
+            try:
+                enqueue_active_learning(
+                    db,
+                    grading_job_id=job_id,
+                    submission_id=submission_id,
+                    question_id=ctx.question_id or submission_id,
+                    result=result,
+                    standard_match_confidence=std_match_confidence,
+                )
+                db.commit()
+            except Exception:
+                db.rollback()
+
+    if ctx.question_id and result.trait_diagnostics:
+        rel = nearest_anchor_match(
+            db,
+            question_id=ctx.question_id,
+            essay_trait_levels=essay_trait_levels_from_diagnostics(result.trait_diagnostics),
+        )
+        if rel:
+            result.anchor_relative_scale = rel
+            result.anchor_count = int(rel.get("anchor_count") or result.anchor_count)
+            result.diagnostic_header = {
+                **(result.diagnostic_header or {}),
+                "anchor_relative_scale": rel,
+            }
+    result.standard_match_confidence = std_match_confidence
+    if result.diagnostic_header is not None:
+        result.diagnostic_header = {
+            **result.diagnostic_header,
+            "standard_match_confidence": std_match_confidence,
+        }
+    return result
 
 
 def engine_result_to_payload_meta(result: ScoringEngineResult) -> dict:
+    trait_block = {
+        "engine": "diagnostic_trait_v1",
+        "trait_engine_version": "v1",
+        "rubric_version": result.rubric_version,
+        "question_standard_version": result.question_standard_version,
+        "standard_match_confidence": result.standard_match_confidence,
+        "trait_diagnostics": result.trait_diagnostics,
+        "ability_level": result.ability_level,
+        "score_interval": list(result.score_interval) if result.score_interval else None,
+        "system_center_score": result.system_center_score,
+        "score_uncalibrated": result.score_uncalibrated,
+        "trait_confidence": result.trait_confidence,
+        "suppress_absolute_score": result.suppress_absolute_score,
+        "trait_dispute_notes": result.trait_dispute_notes,
+        "hard_rule_flags": result.hard_rule_flags,
+        "primary_loss_traits": result.primary_loss_traits,
+        "diagnostic_header": result.diagnostic_header,
+        "multi_standard_views": result.multi_standard_views,
+        "score_display_mode": result.score_display_mode,
+        "human_review_recommended": result.human_review_recommended,
+        "trait_vote_max_spread": result.trait_vote_max_spread,
+        "anchor_count": result.anchor_count,
+        "anchor_relative_scale": result.anchor_relative_scale or None,
+        "score_disclaimer": None,  # finalize_trait_v1_report 写入 PRD 文案
+    }
     return {
         "scoring_engine": {
             "exam_level": result.exam_level,
@@ -279,17 +242,15 @@ def engine_result_to_payload_meta(result: ScoringEngineResult) -> dict:
             "deliberation_triggered": result.deliberation_triggered,
             "deliberation_note": result.deliberation_note,
             "layers": [{"layer": t.layer, "detail": t.detail, "data": t.data} for t in result.engine_traces],
+            **trait_block,
         },
         "tier_label": tier_summary(result.tier),
         "level_specific_feedback": result.level_specific_feedback,
+        "ability_level": result.ability_level,
+        "trait_diagnostics": result.trait_diagnostics,
+        "score_disclaimer": trait_block["score_disclaimer"],
+        "diagnostic_header": result.diagnostic_header,
+        "multi_standard_views": result.multi_standard_views,
+        "score_display_mode": result.score_display_mode,
+        "human_review_recommended": result.human_review_recommended,
     }
-
-
-def _engine_confidence(det: DeterministicScoreResult, deliberation: bool, word_ratio: float) -> float:
-    if word_ratio < 0.5:
-        return 0.55
-    borderline = sum(1 for h in det.point_hits if h.status == "borderline")
-    base = 0.82 - borderline * 0.04
-    if deliberation:
-        base -= 0.06
-    return round(max(0.5, min(0.95, base)), 2)

@@ -68,6 +68,35 @@ STANDARD_PIPELINE_STEPS = [
 ]
 
 
+def _append_material_enriched_consensus(
+    db: Session,
+    job: StandardGenerationJob,
+    *,
+    question_id: str,
+    q_std: Any,
+    mat: Any,
+    rubric: dict[str, Any],
+) -> None:
+    from app.services.standard_engine.standard_card_enrich import enrich_card_payload_from_job_context
+
+    row = (
+        db.query(StandardJobStep)
+        .filter(StandardJobStep.job_id == job.id, StandardJobStep.step == "standard_card_v1_consensus")
+        .order_by(StandardJobStep.created_at.desc())
+        .first()
+    )
+    if not row or not row.payload:
+        return
+    payload = enrich_card_payload_from_job_context(
+        question_id,
+        dict(row.payload),
+        q_std=q_std,
+        mat=mat,
+        rubric=rubric,
+    )
+    append_job_step(db, job, "standard_card_v1_consensus", payload, detail="material_enriched")
+
+
 def append_job_step(
     db: Session,
     job: StandardGenerationJob,
@@ -183,7 +212,45 @@ async def _run_pipeline_async(db: Session, job_id: str) -> None:
         cached_p05 = dict(cache_row.bundle.get("validate_p05") or {}) or None
     elif use_llm and cred:
         append_job_step(db, job, "question_std", {"status": "calling"}, detail="calling_llm")
-        q_std = await generate_question_standard_llm(db, cred, essay, user_id=user_id, job_id=job.id)
+        if settings.standard_consensus_3model_enabled:
+            from app.services.standard_engine.standard_consensus_pipeline import run_standard_consensus_pipeline
+
+            q_std, card, meta = await run_standard_consensus_pipeline(
+                db, essay=essay, user_id=user_id, job_id=job.id
+            )
+            append_job_step(
+                db,
+                job,
+                "standard_card_v1_consensus",
+                {
+                    "standard_card_v1": card.model_dump(),
+                    "consensus_score": meta.consensus_score,
+                    "model_labels": meta.model_labels,
+                    "dispute_marks": meta.dispute_marks,
+                    "field_agreement": meta.field_agreement,
+                },
+            )
+        else:
+            q_std = await generate_question_standard_llm(db, cred, essay, user_id=user_id, job_id=job.id)
+            from app.services.standard_engine.standard_consensus_pipeline import (
+                card_from_question_standard,
+                merge_standard_cards_v1,
+            )
+
+            single_card = card_from_question_standard(essay.question_id, q_std)
+            merged, meta = merge_standard_cards_v1([single_card])
+            append_job_step(
+                db,
+                job,
+                "standard_card_v1_consensus",
+                {
+                    "standard_card_v1": merged.model_dump(),
+                    "consensus_score": meta.consensus_score,
+                    "model_labels": ["single"],
+                    "dispute_marks": merged.dispute_marks,
+                    "field_agreement": meta.field_agreement,
+                },
+            )
         append_job_step(db, job, "question_std", q_std.model_dump())
 
         mat = await generate_material_analysis_llm(db, cred, essay, q_std, user_id=user_id, job_id=job.id)
@@ -198,6 +265,24 @@ async def _run_pipeline_async(db: Session, job_id: str) -> None:
     else:
         q_std = stub_question_standard(essay)
         append_job_step(db, job, "question_std", {**q_std.model_dump(), "source": "stub"})
+        from app.services.standard_engine.standard_consensus_pipeline import (
+            card_from_question_standard,
+            merge_standard_cards_v1,
+        )
+
+        stub_card = card_from_question_standard(essay.question_id, q_std)
+        merged_stub, meta_stub = merge_standard_cards_v1([stub_card])
+        append_job_step(
+            db,
+            job,
+            "standard_card_v1_consensus",
+            {
+                "standard_card_v1": merged_stub.model_dump(),
+                "consensus_score": meta_stub.consensus_score,
+                "model_labels": ["stub"],
+                "dispute_marks": merged_stub.dispute_marks,
+            },
+        )
 
         mat = stub_material_analysis(essay)
         append_job_step(db, job, "material_analysis", mat.model_dump())
@@ -206,6 +291,16 @@ async def _run_pipeline_async(db: Session, job_id: str) -> None:
         rubric_candidates_payload = {"source": "stub"}
         append_job_step(db, job, "rubric_candidates", rubric_candidates_payload)
         append_job_step(db, job, "rubric_merged", rubric.model_dump())
+
+    rubric_dict_early = rubric.model_dump()
+    _append_material_enriched_consensus(
+        db,
+        job,
+        question_id=essay.question_id,
+        q_std=q_std,
+        mat=mat,
+        rubric=rubric_dict_early,
+    )
 
     loss = build_loss_rules(rubric)
     rubric.loss_rules = loss

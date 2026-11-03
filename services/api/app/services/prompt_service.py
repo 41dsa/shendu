@@ -12,3 +12,15 @@ def get_active_grading_system_prompt(db: Session, fallback: str) -> str:
         .first()
     )
     return row.content if row else fallback
+
+
+def get_active_custom_traditional_grading_prompt(db: Session, fallback: str) -> str:
+    row = (
+        db.query(PromptVersion)
+        .filter(
+            PromptVersion.purpose == PromptPurpose.essay_grading_custom,
+            PromptVersion.is_active.is_(True),
+        )
+        .first()
+    )
+    return row.content if row else fallback

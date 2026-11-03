@@ -29,7 +29,15 @@ from app.services.coach_service import (
 from app.services.essay_context import EssayGradingContext, resolve_essay_context, word_bounds_for_context
 from app.services.standard_engine.custom_essay_standard import ensure_custom_essay_standard
 from app.services.essay_writing_guide import writing_guide_for_submission
-from app.services.prompt_service import get_active_grading_system_prompt
+from app.services.prompt_service import (
+    get_active_custom_traditional_grading_prompt,
+    get_active_grading_system_prompt,
+)
+from app.services.custom_traditional_grader import (
+    fill_traditional_grading_prompt,
+    load_default_custom_traditional_prompt,
+    normalize_traditional_marking_payload,
+)
 from app.domain.scoring_engine.types import ScoringEngineResult
 from app.services.grading_helpers import (
     answer_hash,
@@ -44,6 +52,7 @@ from app.services.grading_helpers import (
     strip_holistic_dimension_rows,
 )
 from app.services.scoring_engine.merge import merge_engine_with_llm_payload
+from app.services.scoring_engine.trait_report_builder import TRAIT_V1_LLM_APPEND
 from app.services.scoring_engine.orchestrator import (
     engine_result_to_payload_meta,
     run_scoring_engine,
@@ -68,6 +77,11 @@ _SYSTEM_PROMPT_TEMPLATE = """你是申论大作文阅卷专家（不是小题概
 {
   "total_score": number,
   "score_range": [min, max],
+  "trait_evidence": [
+    {"trait_id": "T1"|"T2"|...|"T8", "level": "L0"|..|"L4",
+     "evidence_positive": [string], "evidence_negative": [string], "evidence_missing": [string],
+     "conclusion": string}
+  ],
   "scoring_points": [
     {"id": string, "label": string, "earned": number, "max": number,
      "hit": "full"|"partial"|"miss", "reason": string, "evidence_ref": string}
@@ -87,7 +101,9 @@ scoring_points 对应题目给出的维度（如立意、结构、论证、语�
 若输入含 rubric_criteria，须按 semantic 匹配（acceptable_expressions / typical_gaps），禁止纯关键词匹配。
 usage_band=low 的准则仅作建议，不得作为强制扣分唯一依据。
 evidence_chain 0～5 条，追溯「维度/准则→作文片段→材料依据（若有）」；无准则可省略该数组。
-若 user JSON 含 deterministic_scoring，须以其总分为基准，总分调整一般不超过 ±4 分且须说明理由。
+若 user JSON 含 deterministic_scoring（Trait V1 引擎），须以其 system_center_score / score_interval 为基准；
+禁止自行给出与引擎区间冲突的精确总分；total_score 仅可填引擎中心值或 0（低置信时）。
+issues / suggestions 须与 trait_evidence 及八大 Trait 诊断一致，不得另立评分标准。
 issues 最多 3 条；每条 issues.user_quote 必填，须为用户作文原文连续摘录（约 15～80 字），不得写评语或概括。
 suggestions 3～5 条。tag 必须使用 PRD 编号+名称，例如：
 review_notes 若写「一类/二类/三类/四类文」及分数区间，须按用户作答要求里声明的题目满分（如满分35分则按35分四档）定档，勿按 rubric 维度满分（如40分）定档。"""
@@ -171,6 +187,13 @@ def log_usage(
         usage_db.close()
 
 
+def _custom_traditional_marking_enabled(custom_prompt: bool) -> bool:
+    if not custom_prompt:
+        return False
+    mode = (settings.custom_essay_grading_mode or "trait_v1").strip().lower()
+    return mode == "traditional_marking"
+
+
 def short_circuit_payload(_ctx: EssayGradingContext, reason: str, word_ratio: float) -> dict[str, Any]:
     return {
         "total_score": 0,
@@ -205,11 +228,12 @@ async def run_grading_job(db: Session, job_id: str) -> None:
         db.commit()
         return
     custom_prompt = bool((submission.user_prompt or "").strip())
+    use_traditional_custom = _custom_traditional_marking_enabled(custom_prompt)
     job.status = GradingJobStatus.running
     db.commit()
 
     try:
-        if custom_prompt:
+        if custom_prompt and not use_traditional_custom:
             append_step(job, "custom_standard", "generating")
             db.commit()
             await ensure_custom_essay_standard(
@@ -229,7 +253,23 @@ async def run_grading_job(db: Session, job_id: str) -> None:
 
         engine_result: ScoringEngineResult | None = None
         word_ratio = 1.0
-        if settings.layered_scoring_engine_enabled:
+        if use_traditional_custom:
+            word_ratio = essay_length_ratio(essay_chars, word_min)
+            if essay_chars < 10 or word_ratio < 0.3:
+                reason = "作文过短" if essay_chars < 10 else f"字数不足（低于建议字数 {word_min} 字的约 30%）"
+                payload = short_circuit_payload(ctx, reason, word_ratio)
+                append_step(job, "parse_prompt", "gate_reject")
+                append_step(job, "generate_report", "short_circuit")
+                report = Report(grading_job_id=job.id, user_id=job.user_id, payload=payload)
+                db.add(report)
+                job.status = GradingJobStatus.succeeded
+                job.finished_at = datetime.now(UTC)
+                job.current_step = "done"
+                db.commit()
+                return
+            append_step(job, "parse_prompt", "gate_ok:traditional_marking")
+            append_step(job, "analyze_structure", "traditional_marking")
+        elif settings.layered_scoring_engine_enabled:
             engine_out = await run_scoring_engine_online(
                 db,
                 ctx,
@@ -253,10 +293,17 @@ async def run_grading_job(db: Session, job_id: str) -> None:
             word_ratio = essay_length_ratio(essay_chars, word_min)
             append_step(job, "parse_prompt", f"gate_ok:{engine_result.exam_level}")
             append_step(job, "check_requirements", "level_adapter")
-            append_step(job, "analyze_structure", "deterministic")
+            append_step(job, "analyze_structure", "trait_v1")
             append_step(job, "analyze_thesis", engine_result.tier.tier_id)
-            append_step(job, "analyze_argumentation", f"hits:{len(engine_result.point_hits)}")
+            append_step(
+                job,
+                "analyze_argumentation",
+                f"traits:{len(engine_result.trait_diagnostics)}",
+            )
         else:
+            # DEPRECATED：layered_scoring_engine_enabled=false 时走旧 LLM 主评（非 PRD V1 Trait 脊柱）
+            if not settings.layered_scoring_engine_enabled and not settings.grading_point_pool_engine_allowed:
+                append_step(job, "parse_prompt", "legacy_llm_only")
             word_ratio = essay_length_ratio(essay_chars, word_min)
             for step in GRADING_STEPS[:5]:
                 append_step(job, step)
@@ -341,6 +388,11 @@ async def run_grading_job(db: Session, job_id: str) -> None:
         if engine_result is not None:
             payload_in["deterministic_scoring"] = engine_result_to_payload_meta(engine_result)
             payload_in["deterministic_scoring"]["total_score"] = engine_result.total_score
+            payload_in["deterministic_scoring"]["system_center_score"] = engine_result.system_center_score
+            payload_in["deterministic_scoring"]["score_interval"] = (
+                list(engine_result.score_interval) if engine_result.score_interval else None
+            )
+            payload_in["deterministic_scoring"]["trait_diagnostics"] = engine_result.trait_diagnostics
             payload_in["deterministic_scoring"]["dimension_rows"] = engine_result.dimension_rows
         if submission.parent_submission_id:
             baseline_for_prompt = find_baseline_report_for_retry(db, submission)
@@ -375,7 +427,27 @@ async def run_grading_job(db: Session, job_id: str) -> None:
                     "严重、中等、轻微各档均要如实列出，不要只写最严重几条。"
                 ),
             }
-        user_prompt = json.dumps(payload_in, ensure_ascii=False)
+        if use_traditional_custom:
+            template = get_active_custom_traditional_grading_prompt(
+                db, load_default_custom_traditional_prompt()
+            )
+            system_prompt = fill_traditional_grading_prompt(
+                template,
+                ctx=ctx,
+                essay=content,
+                word_min=word_min,
+                word_max=word_max,
+                essay_char_count=essay_chars,
+                submission=submission,
+            )
+            user_prompt = "请开始评分。"
+        else:
+            user_prompt = json.dumps(payload_in, ensure_ascii=False)
+            system_prompt = get_active_grading_system_prompt(db, SYSTEM_PROMPT)
+            if engine_result is not None and engine_result.trait_diagnostics:
+                system_prompt = system_prompt + TRAIT_V1_LLM_APPEND
+            if guide_excerpt:
+                system_prompt = system_prompt + _WRITING_GUIDE_SYSTEM_APPEND
 
         append_step(job, "rule_score")
         rule = float(engine_result.total_score) if engine_result else rule_score_fallback(ctx, content)
@@ -383,10 +455,6 @@ async def run_grading_job(db: Session, job_id: str) -> None:
 
         append_step(job, "llm_score", "calling")
         db.commit()
-
-        system_prompt = get_active_grading_system_prompt(db, SYSTEM_PROMPT)
-        if guide_excerpt:
-            system_prompt = system_prompt + _WRITING_GUIDE_SYSTEM_APPEND
         try:
             raw, usage = await asyncio.wait_for(
                 chat_completion_json(cred, system_prompt, user_prompt),
@@ -398,14 +466,18 @@ async def run_grading_job(db: Session, job_id: str) -> None:
                 f"模型调用超过 {int(settings.grading_llm_timeout_seconds)} 秒，请检查网络与 AI 设置",
             ) from exc
         log_usage(db, job.user_id, job.id, cred, usage, "primary")
-        payload = normalize_llm_report_payload(json.loads(raw))
+        parsed_llm = json.loads(raw)
+        if use_traditional_custom:
+            parsed_llm = normalize_traditional_marking_payload(parsed_llm)
+        payload = normalize_llm_report_payload(parsed_llm)
 
-        if engine_result is not None:
+        if engine_result is not None and not use_traditional_custom:
             payload = merge_engine_with_llm_payload(
                 engine_result,
                 payload,
                 max_llm_delta=settings.layered_scoring_max_llm_delta,
                 max_score=float(ctx.score),
+                grading_ctx=ctx,
             )
         llm_score = float(payload.get("total_score", rule))
         if engine_result is None:
@@ -432,7 +504,9 @@ async def run_grading_job(db: Session, job_id: str) -> None:
         consensus_discarded = False
 
         # 双路复核：字数达标且未开省流时必跑第二次总分检验（与主评/规则是否接近无关）
-        use_consensus = not cred.save_tokens_mode and word_ratio >= 0.3
+        use_consensus = (
+            not use_traditional_custom and not cred.save_tokens_mode and word_ratio >= 0.3
+        )
         if use_consensus:
             append_step(job, "review", "consensus")
             db.commit()
@@ -462,7 +536,16 @@ async def run_grading_job(db: Session, job_id: str) -> None:
         payload["consensus_ran"] = len(consensus_scores) >= 2
         payload["consensus_rate"] = compute_consensus_rate(consensus_scores, float(ctx.score))
         payload["llm_score"] = llm_score
-        payload["total_score"] = llm_score
+        if engine_result is not None and engine_result.trait_diagnostics:
+            if engine_result.suppress_absolute_score:
+                payload["total_score"] = 0.0
+            else:
+                payload["total_score"] = float(
+                    engine_result.system_center_score or engine_result.total_score or 0
+                )
+            payload["merged_total"] = payload["total_score"]
+        else:
+            payload["total_score"] = llm_score
         payload["attempt"] = int(submission.attempt or 1)
         from app.services.grading_helpers import (
             compact_display_issues,
@@ -520,7 +603,18 @@ async def run_grading_job(db: Session, job_id: str) -> None:
             "grading_standard_mode": grading_standard_mode,
             "writing_guide_applied": bool(guide_excerpt),
             "score_confidence_declaration": ctx.score_confidence_declaration,
-            "scoring_engine_mode": "layered" if engine_result is not None else "legacy",
+            "scoring_engine_mode": (
+                "custom_traditional_marking"
+                if use_traditional_custom
+                else (
+                    "diagnostic_trait_v1"
+                    if engine_result is not None and engine_result.trait_diagnostics
+                    else ("layered" if engine_result is not None else "legacy")
+                )
+            ),
+            "custom_grading_mode": (
+                "traditional_marking" if use_traditional_custom else settings.custom_essay_grading_mode
+            ),
             "exam_level": engine_result.exam_level if engine_result else None,
             "level_inferred": engine_result.level_inferred if engine_result else None,
         }
@@ -578,6 +672,38 @@ async def run_grading_job(db: Session, job_id: str) -> None:
                 extra = "改写后仍有中等及以上问题，总分仅供参考，请优先处理「待继续改进」列表。"
                 payload["confidence_note"] = f"{note} {extra}".strip() if note else extra
 
+        if (
+            submission.parent_submission_id
+            and baseline_report
+            and baseline_report.payload
+            and engine_result
+            and settings.weak_supervision_enabled
+        ):
+            from app.services.weak_supervision_factory import persist_retry_trait_delta
+
+            prior_traits = list(baseline_report.payload.get("trait_diagnostics") or [])
+            current_traits = list(payload.get("trait_diagnostics") or [])
+            persist_retry_trait_delta(
+                db,
+                grading_job_id=job.id,
+                submission_id=submission.id,
+                question_id=question.id,
+                prior_traits=prior_traits,
+                current_traits=current_traits,
+                rubric_version=str(engine_result.rubric_version or engine_result.point_pool_version or ""),
+            )
+            if settings.weak_supervision_enabled:
+                from app.services.active_learning_pool import enqueue_retry_trait_volatility
+
+                enqueue_retry_trait_volatility(
+                    db,
+                    grading_job_id=job.id,
+                    submission_id=submission.id,
+                    question_id=question.id,
+                    prior_traits=prior_traits,
+                    current_traits=current_traits,
+                )
+
         append_step(job, "generate_report")
         report = Report(grading_job_id=job.id, user_id=job.user_id, payload=payload)
         db.add(report)
@@ -608,8 +734,15 @@ async def run_grading_job(db: Session, job_id: str) -> None:
         job.error_message = ai_error_storage_message(exc)
         job.finished_at = datetime.now(UTC)
         fail_step = "llm_score"
-        if custom_prompt and not any(s.get("step") == "parse_prompt" for s in (job.steps or [])):
-            fail_step = "custom_standard"
+        steps = job.steps or []
+        if not any(s.get("step") == "parse_prompt" for s in steps):
+            # custom_standard 已 done 但未到 gate_ok → Trait 在线引擎 / 证据 LLM
+            if custom_prompt and any(s.get("step") == "custom_standard" for s in steps):
+                fail_step = "analyze_structure"
+            elif custom_prompt:
+                fail_step = "custom_standard"
+            else:
+                fail_step = "analyze_structure"
         append_step(job, fail_step, f"failed:{exc.code}")
         job.current_step = "done"
         db.commit()
@@ -621,7 +754,8 @@ async def run_grading_job(db: Session, job_id: str) -> None:
         db.commit()
     except Exception as exc:  # noqa: BLE001
         job.status = GradingJobStatus.failed
-        job.error_message = f"INTERNAL: {str(exc)[:400]}"
+        detail = str(exc).strip() or type(exc).__name__
+        job.error_message = f"INTERNAL: {detail[:400]}"
         job.finished_at = datetime.now(UTC)
         job.current_step = "done"
         db.commit()

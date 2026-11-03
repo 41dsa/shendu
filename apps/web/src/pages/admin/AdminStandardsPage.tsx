@@ -97,6 +97,17 @@ type QRow = { id: string; title: string };
 
 type VersionRow = { version: number; status: string; is_active: boolean; published_at: string | null };
 
+type StandardCardReviewQueueRow = {
+  job_id: string;
+  question_id: string;
+  created_at: string | null;
+  consensus_score: number;
+  review_status: string;
+  dispute_marks: string[];
+  publish_blocked: boolean;
+  min_consensus_score: number;
+};
+
 type RubricCriterion = {
   id: string;
   dimension_id: string;
@@ -127,6 +138,11 @@ export default function AdminStandardsPage() {
     },
   });
 
+  const { data: reviewQueue, refetch: refetchReviewQueue } = useQuery({
+    queryKey: ["admin-standards-review-queue"],
+    queryFn: () => api<StandardCardReviewQueueRow[]>("/admin/standards/standard-card-review-queue"),
+  });
+
   const { data: questions } = useQuery({
     queryKey: ["admin-questions"],
     queryFn: () => api<QRow[]>("/admin/questions"),
@@ -150,6 +166,16 @@ export default function AdminStandardsPage() {
   const { data: mstdEai, refetch: refetchMstdEai } = useQuery({
     queryKey: ["admin-mstd-e-ai-milestone"],
     queryFn: () => api<MstdEaiMilestone>("/admin/mstd-e-ai-milestone"),
+  });
+
+  const { data: engineConfig } = useQuery({
+    queryKey: ["admin-standards-engine-config"],
+    queryFn: () =>
+      api<{
+        standard_consensus_3model_enabled: boolean;
+        standard_consensus_min_score: number;
+        trait_llm_voting_enabled: boolean;
+      }>("/admin/standards/engine-config"),
   });
 
   const { data: examStandards, refetch: refetchExamStandards } = useQuery({
@@ -193,6 +219,36 @@ export default function AdminStandardsPage() {
     onError: showApiError,
   });
 
+  const reviewCardMut = useMutation({
+    mutationFn: (v: {
+      jobId: string;
+      action: "approve" | "reject";
+      publishAfter?: boolean;
+      note?: string;
+    }) =>
+      api<{ review_status: string; published?: boolean; standard_version?: number }>(
+        `/admin/standards/jobs/${v.jobId}/standard-card-review`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            action: v.action,
+            note: v.note ?? "",
+            publish_after: !!v.publishAfter,
+          }),
+        },
+      ),
+    onSuccess: (_, v) => {
+      message.success(
+        v.publishAfter ? "标准卡已通过并发布" : v.action === "approve" ? "标准卡审核通过" : "已驳回标准卡",
+      );
+      refetchReviewQueue();
+      refetchJobs();
+      refetchExamStandards();
+      if (selectedJobId) qc.invalidateQueries({ queryKey: ["admin-standards-job", selectedJobId] });
+    },
+    onError: showApiError,
+  });
+
   const publishMut = useMutation({
     mutationFn: ({ jobId, force }: { jobId: string; force?: boolean }) =>
       api(`/admin/standards/jobs/${jobId}/publish${force ? "?force=true" : ""}`, {
@@ -215,10 +271,19 @@ export default function AdminStandardsPage() {
     mutationFn: async (file: File) => {
       const fd = new FormData();
       fd.append("file", file);
-      return apiUpload<{ count: number }>("/admin/standards/questions/import-csv", fd);
+      return apiUpload<{
+        count: number;
+        created_count?: number;
+        updated_count?: number;
+        skipped_locked_count?: number;
+      }>("/admin/standards/questions/import-csv", fd);
     },
     onSuccess: (res) => {
-      message.success(`已导入 ${res.count} 道大作文`);
+      const extra =
+        res.skipped_locked_count != null
+          ? `（新建 ${res.created_count ?? 0}，更新 ${res.updated_count ?? 0}，锁定跳过 ${res.skipped_locked_count}）`
+          : "";
+      message.success(`已导入 ${res.count} 道大作文${extra}`);
       qc.invalidateQueries({ queryKey: ["admin-questions"] });
     },
     onError: showApiError,
@@ -309,6 +374,24 @@ export default function AdminStandardsPage() {
     | { dimensions?: { id: string; label: string; max_score: number }[]; criteria?: RubricCriterion[] }
     | undefined;
 
+  const consensusPayload = jobDetail?.steps?.filter((s) => s.step === "standard_card_v1_consensus").pop()
+    ?.payload as
+    | {
+        consensus_score?: number;
+        standard_card_v1?: {
+          review_status?: string;
+          dispute_marks?: string[];
+          theme?: string;
+          keywords?: string[];
+        };
+      }
+    | undefined;
+
+  const standardCardReviewStatus = consensusPayload?.standard_card_v1?.review_status ?? "—";
+  const standardCardDisputes = consensusPayload?.standard_card_v1?.dispute_marks ?? [];
+  const standardCardNeedsReview =
+    !!consensusPayload?.standard_card_v1 && standardCardReviewStatus !== "published";
+
   const editableCriteria = draftCriteria ?? rubricMerged?.criteria ?? [];
 
   const rubricTableRows = useMemo(() => {
@@ -325,6 +408,21 @@ export default function AdminStandardsPage() {
 
   return (
     <Space direction="vertical" size="large" style={{ width: "100%" }}>
+      {engineConfig ? (
+        <Alert
+          type={engineConfig.standard_consensus_3model_enabled ? "success" : "warning"}
+          showIcon
+          message={
+            engineConfig.standard_consensus_3model_enabled
+              ? "三模型标准卡共识已开启（M-11）"
+              : "三模型标准卡共识未开启（单路 LLM + 单卡 merge）"
+          }
+          description={`共识发布门槛 ${engineConfig.standard_consensus_min_score} · Trait 三模型投票 ${
+            engineConfig.trait_llm_voting_enabled ? "开" : "关"
+          }。生产请设环境变量 STANDARD_CONSENSUS_3MODEL_ENABLED=1 并配置 BYOK 三角色。`}
+        />
+      ) : null}
+
       <Alert
         type={mstdEai?.milestone_mstd_e_ai_passed ? "success" : "info"}
         showIcon
@@ -629,6 +727,70 @@ export default function AdminStandardsPage() {
         />
       </Card>
 
+      <Card
+        title={`标准卡教研审核（M-14）${reviewQueue?.length ? ` · ${reviewQueue.length} 待审` : ""}`}
+        size="small"
+      >
+        <Table
+          rowKey="job_id"
+          size="small"
+          pagination={{ pageSize: 8 }}
+          locale={{ emptyText: "暂无待审核标准卡（validated 且未 published）" }}
+          dataSource={reviewQueue ?? []}
+          onRow={(row) => ({
+            onClick: () => setSelectedJobId(row.job_id),
+            style: { cursor: "pointer" },
+          })}
+          columns={[
+            { title: "题目", dataIndex: "question_id", ellipsis: true },
+            {
+              title: "共识分",
+              dataIndex: "consensus_score",
+              width: 80,
+              render: (v: number) => Number(v).toFixed(2),
+            },
+            { title: "审核状态", dataIndex: "review_status", render: (s) => <Tag>{s}</Tag> },
+            {
+              title: "发布拦截",
+              dataIndex: "publish_blocked",
+              width: 88,
+              render: (b) => (b ? <Tag color="orange">需审核</Tag> : <Tag color="green">可发布</Tag>),
+            },
+            {
+              title: "分歧",
+              dataIndex: "dispute_marks",
+              ellipsis: true,
+              render: (marks: string[]) => (marks?.length ? marks.join("；") : "—"),
+            },
+            {
+              title: "操作",
+              width: 220,
+              render: (_, row) => (
+                <Space size="small" onClick={(e) => e.stopPropagation()}>
+                  <Button
+                    size="small"
+                    type="primary"
+                    loading={reviewCardMut.isPending}
+                    onClick={() => reviewCardMut.mutate({ jobId: row.job_id, action: "approve" })}
+                  >
+                    通过
+                  </Button>
+                  <Button
+                    size="small"
+                    loading={reviewCardMut.isPending}
+                    onClick={() =>
+                      reviewCardMut.mutate({ jobId: row.job_id, action: "approve", publishAfter: true })
+                    }
+                  >
+                    通过并发布
+                  </Button>
+                </Space>
+              ),
+            },
+          ]}
+        />
+      </Card>
+
       <Card title="标准任务" size="small">
         <Table
           rowKey="id"
@@ -680,7 +842,26 @@ export default function AdminStandardsPage() {
         title={`任务详情 ${selectedJobId?.slice(0, 8)}…`}
         footer={
           jobDetail?.status === "validated" ? (
-            <Space>
+            <Space wrap>
+              {standardCardNeedsReview && selectedJobId && (
+                <>
+                  <Button
+                    loading={reviewCardMut.isPending}
+                    onClick={() => reviewCardMut.mutate({ jobId: selectedJobId, action: "approve" })}
+                  >
+                    通过标准卡
+                  </Button>
+                  <Button
+                    type="primary"
+                    loading={reviewCardMut.isPending}
+                    onClick={() =>
+                      reviewCardMut.mutate({ jobId: selectedJobId, action: "approve", publishAfter: true })
+                    }
+                  >
+                    通过并发布
+                  </Button>
+                </>
+              )}
               <Button
                 onClick={() => selectedJobId && publishMut.mutate({ jobId: selectedJobId })}
                 type="primary"
@@ -738,6 +919,27 @@ export default function AdminStandardsPage() {
                         ? "（缓存）"
                         : "—"}
                   </Descriptions.Item>
+                </>
+              )}
+              {consensusPayload?.standard_card_v1 && (
+                <>
+                  <Descriptions.Item label="标准卡审核">{standardCardReviewStatus}</Descriptions.Item>
+                  <Descriptions.Item label="共识分">
+                    {consensusPayload.consensus_score != null
+                      ? Number(consensusPayload.consensus_score).toFixed(2)
+                      : "—"}
+                  </Descriptions.Item>
+                  <Descriptions.Item label="主题" span={2}>
+                    {consensusPayload.standard_card_v1.theme ?? "—"}
+                  </Descriptions.Item>
+                  <Descriptions.Item label="关键词" span={2}>
+                    {(consensusPayload.standard_card_v1.keywords ?? []).join("、") || "—"}
+                  </Descriptions.Item>
+                  {standardCardDisputes.length > 0 && (
+                    <Descriptions.Item label="分歧标记" span={2}>
+                      {standardCardDisputes.join("；")}
+                    </Descriptions.Item>
+                  )}
                 </>
               )}
             </Descriptions>

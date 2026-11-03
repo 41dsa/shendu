@@ -8,6 +8,7 @@ from sqlalchemy import JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
+from app.domain.question_type import QuestionType
 
 
 def utcnow() -> datetime:
@@ -28,12 +29,6 @@ class RedeemCodeStatus(str, enum.Enum):
 class LicenseStatus(str, enum.Enum):
     active = "active"
     revoked = "revoked"
-
-
-class QuestionType(str, enum.Enum):
-    """V1 仅批改申论大作文；小题（概括/分析/对策）不在产品范围内。"""
-
-    essay = "essay"
 
 
 class SubmissionStatus(str, enum.Enum):
@@ -251,6 +246,7 @@ class ScoringPointHitLog(Base):
 
 class PromptPurpose(str, enum.Enum):
     essay_grading = "essay_grading"
+    essay_grading_custom = "essay_grading_custom"
     essay_consensus = "essay_consensus"
     standard_p01 = "standard_p01"
     standard_p02 = "standard_p02"
@@ -486,4 +482,149 @@ class ExamStandard(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=False)
     payload: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     published_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class WeakLabelType(str, enum.Enum):
+    rule = "rule"
+    rubric = "rubric"
+    model_consensus = "model_consensus"
+    self_consistency = "self_consistency"
+    pair_compare = "pair_compare"
+    retry_delta = "retry_delta"
+    counterexample = "counterexample"
+
+
+class WeakLabel(Base):
+    """PRD §7.4 弱监督标签（禁止冒充真值）。"""
+
+    __tablename__ = "weak_labels"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    grading_job_id: Mapped[Optional[str]] = mapped_column(ForeignKey("grading_jobs.id"), nullable=True, index=True)
+    submission_id: Mapped[Optional[str]] = mapped_column(ForeignKey("submissions.id"), nullable=True, index=True)
+    question_id: Mapped[Optional[str]] = mapped_column(ForeignKey("questions.id"), nullable=True, index=True)
+    label_type: Mapped[WeakLabelType] = mapped_column(Enum(WeakLabelType), index=True)
+    trait_id: Mapped[Optional[str]] = mapped_column(String(8), nullable=True, index=True)
+    label_value: Mapped[str] = mapped_column(String(64), default="")
+    is_weak_label: Mapped[bool] = mapped_column(Boolean, default=True)
+    rubric_version: Mapped[str] = mapped_column(String(32), default="")
+    standard_version: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ActiveLearningReason(str, enum.Enum):
+    trait_vote_spread = "trait_vote_spread"
+    evidence_insufficient = "evidence_insufficient"
+    standard_match_low = "standard_match_low"
+    level_boundary = "level_boundary"
+    user_dispute = "user_dispute"
+    self_consistency = "self_consistency"
+
+
+class ActiveLearningPoolEntry(Base):
+    """PRD §8.3 主动学习难例池。"""
+
+    __tablename__ = "active_learning_pool"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    grading_job_id: Mapped[Optional[str]] = mapped_column(ForeignKey("grading_jobs.id"), nullable=True, index=True)
+    submission_id: Mapped[Optional[str]] = mapped_column(ForeignKey("submissions.id"), nullable=True, index=True)
+    question_id: Mapped[Optional[str]] = mapped_column(ForeignKey("questions.id"), nullable=True, index=True)
+    reason: Mapped[ActiveLearningReason] = mapped_column(Enum(ActiveLearningReason), index=True)
+    priority: Mapped[float] = mapped_column(Float, default=0.5)
+    status: Mapped[str] = mapped_column(String(24), default="open", index=True)
+    snapshot: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class TraitPairCompareStatus(str, enum.Enum):
+    pending = "pending"
+    completed = "completed"
+    cancelled = "cancelled"
+
+
+class EssayImportAudit(Base):
+    """Q-03：EssayItem 批量导入审计。"""
+
+    __tablename__ = "essay_import_audits"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    source: Mapped[str] = mapped_column(String(32), default="csv")
+    filename: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
+    imported_by_user_id: Mapped[Optional[str]] = mapped_column(ForeignKey("users.id"), nullable=True)
+    item_count: Mapped[int] = mapped_column(Integer, default=0)
+    created_count: Mapped[int] = mapped_column(Integer, default=0)
+    updated_count: Mapped[int] = mapped_column(Integer, default=0)
+    skipped_locked_count: Mapped[int] = mapped_column(Integer, default=0)
+    items: Mapped[list[Any]] = mapped_column(JSON, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class AnchorEssay(Base):
+    """PRD §6.2 锚作文（按题 L0～L4 覆盖）。"""
+
+    __tablename__ = "anchor_essays"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    question_id: Mapped[str] = mapped_column(ForeignKey("questions.id"), index=True)
+    title: Mapped[str] = mapped_column(String(255), default="")
+    content: Mapped[str] = mapped_column(Text)
+    aggregate_level: Mapped[str] = mapped_column(String(8), default="L2")
+    trait_levels: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    is_published: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class AnchorTraitReview(Base):
+    """PRD AN-03：多评者 Trait 标注（允许分歧）。"""
+
+    __tablename__ = "anchor_trait_reviews"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    anchor_essay_id: Mapped[str] = mapped_column(ForeignKey("anchor_essays.id"), index=True)
+    reviewer_label: Mapped[str] = mapped_column(String(32), default="reviewer_1")
+    trait_id: Mapped[str] = mapped_column(String(8), index=True)
+    level: Mapped[str] = mapped_column(String(4), default="L2")
+    evidence_positive: Mapped[list[Any]] = mapped_column(JSON, default=list)
+    reviewer_rationale: Mapped[str] = mapped_column(String(1024), default="")
+    dispute_note: Mapped[str] = mapped_column(String(512), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class TraitScoringRecord(Base):
+    """PRD §11 Trait 评分结构化记录（与 hit_log 双写过渡期）。"""
+
+    __tablename__ = "trait_scoring_records"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    grading_job_id: Mapped[str] = mapped_column(ForeignKey("grading_jobs.id"), index=True)
+    submission_id: Mapped[str] = mapped_column(ForeignKey("submissions.id"), index=True)
+    question_id: Mapped[str] = mapped_column(ForeignKey("questions.id"), index=True)
+    trait_id: Mapped[str] = mapped_column(String(8), index=True)
+    trait_level: Mapped[str] = mapped_column(String(4), default="L2")
+    model_votes: Mapped[list[Any]] = mapped_column(JSON, default=list)
+    vote_spread: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    confidence: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    evidence_payload: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    final_calibrated_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    rubric_version: Mapped[str] = mapped_column(String(32), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class TraitPairCompareTask(Base):
+    """PRD §7.4 成对比较弱标签任务（A vs B）。"""
+
+    __tablename__ = "trait_pair_compare_tasks"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    question_id: Mapped[str] = mapped_column(ForeignKey("questions.id"), index=True)
+    submission_a_id: Mapped[str] = mapped_column(ForeignKey("submissions.id"), index=True)
+    submission_b_id: Mapped[str] = mapped_column(ForeignKey("submissions.id"), index=True)
+    trait_id: Mapped[Optional[str]] = mapped_column(String(8), nullable=True)
+    status: Mapped[TraitPairCompareStatus] = mapped_column(
+        Enum(TraitPairCompareStatus), default=TraitPairCompareStatus.pending
+    )
+    result: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

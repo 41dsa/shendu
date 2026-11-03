@@ -58,10 +58,16 @@ def _latest_step_payload(db: Session, job_id: str, step: str) -> dict[str, Any]:
 
 
 def assemble_payload_from_job(db: Session, job: StandardGenerationJob) -> dict[str, Any]:
+    q_std = dict(_latest_step_payload(db, job.id, "question_std"))
+    consensus = _latest_step_payload(db, job.id, "standard_card_v1_consensus")
+    card = dict(consensus.get("standard_card_v1") or {})
+    if card:
+        q_std = {**q_std, **card, "schema_version": card.get("schema_version") or "standard_card_v1"}
     return {
         "question_id": job.question_id,
         "source_job_id": job.id,
-        "question_standard": _latest_step_payload(db, job.id, "question_std"),
+        "question_standard": q_std,
+        "standard_card_v1_consensus": consensus or None,
         "material_analysis": _latest_step_payload(db, job.id, "material_analysis"),
         "rubric_standard": _latest_step_payload(db, job.id, "rubric_merged"),
         "loss_rules": (_latest_step_payload(db, job.id, "loss_rules") or {}).get("rules") or [],
@@ -87,6 +93,34 @@ def publish_standard_from_job(db: Session, job_id: str, *, force: bool = False) 
     min_conf = float(getattr(settings, "standard_publish_min_confidence", PUBLISH_MIN_CONFIDENCE))
     if agg_conf < min_conf and not force:
         raise PublishBlockedError(f"标准置信度 {agg_conf:.2f} 低于发布门槛 {min_conf}")
+
+    consensus = _latest_step_payload(db, job.id, "standard_card_v1_consensus")
+    card = consensus.get("standard_card_v1") if consensus else None
+    if isinstance(card, dict):
+        from app.schemas.standard_card_v1 import standard_card_v1_from_legacy
+        from app.services.standard_engine.standard_card_validation import standard_card_validation_errors
+
+        q_std_step = _latest_step_payload(db, job.id, "question_std")
+        v1_card = standard_card_v1_from_legacy(job.question_id, {**q_std_step, **card})
+        card_errors = standard_card_validation_errors(v1_card, for_publish=True)
+        blocking_card = [e for e in card_errors if "proposition_task" in e]
+        if str(v1_card.review_status) == "published":
+            blocking_card.extend(
+                e for e in card_errors if "core_problem" in e or ("M-01:" in e and "theme" in e)
+            )
+        if blocking_card and not force:
+            raise PublishBlockedError("标准卡字段不完整: " + "; ".join(dict.fromkeys(blocking_card)))
+
+        review = str(card.get("review_status") or "draft")
+        score = float(consensus.get("consensus_score") or 0)
+        min_cons = float(getattr(settings, "standard_consensus_min_score", 0.85))
+        if review != "published" and score < min_cons and not force:
+            disputes = card.get("dispute_marks") or []
+            raise PublishBlockedError(
+                "标准卡三模型共识未达发布条件（review_status="
+                f"{review}, consensus={score:.2f}）"
+                + (f"；分歧：{disputes[0]}" if disputes else "")
+            )
 
     question = db.get(Question, job.question_id)
     if not question:

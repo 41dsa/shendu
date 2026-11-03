@@ -1,17 +1,33 @@
-"""分层评分引擎冒烟：闸门、级别、确定性评分、校准、报告适配。"""
+"""PRD V1 Trait 诊断评分引擎冒烟。"""
 
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from dataclasses import replace
+
 from app.domain.essay import DEFAULT_RUBRIC_DIMENSIONS
-from app.models.entities import Question, QuestionType
-from app.services.essay_context import EssayGradingContext
+from app.domain.essay_grading_context import EssayGradingContext
+from app.domain.question_type import QuestionType
 from app.domain.scoring_engine.types import ScoringEngineResult, ScoringTier
 from app.services.grading_helpers import normalize_llm_report_payload
 from app.services.scoring_engine.merge import merge_engine_with_llm_payload
 from app.services.scoring_engine.orchestrator import run_scoring_engine
+
+_TRAIT_ROW = {
+    "trait_id": "T1",
+    "name": "审题与任务完成",
+    "standard_tier": "B",
+    "level": "L3",
+    "participates_in_score": True,
+    "confidence": 0.8,
+    "evidence_positive": ["推进基层治理现代化"],
+    "evidence_negative": [],
+    "evidence_missing": [],
+    "conclusion": "L3",
+    "dispute_hint": "",
+}
 
 
 def _ctx(**kwargs) -> EssayGradingContext:
@@ -25,6 +41,8 @@ def _ctx(**kwargs) -> EssayGradingContext:
         word_limit=1200,
         question_type=QuestionType.essay,
         cache_context_key="t",
+        standard_version=1,
+        question_standard={"proposition_task": "论证观点", "keywords": ["基层治理", "治理体系"]},
         rubric_criteria=[
             {
                 "id": "RC1",
@@ -49,63 +67,52 @@ def main() -> None:
     result = run_scoring_engine(_ctx(), essay)
     assert not isinstance(result, dict)
     assert result.exam_level == "provincial"
-    enforced = run_scoring_engine(_ctx(exam_level="enforcement"), essay)
-    assert not isinstance(enforced, dict)
-    assert enforced.exam_level == "enforcement"
-    assert enforced.level_inferred is False
-    assert 0 <= result.total_score <= 40
-    assert result.dimension_rows
-    assert result.tier.tier_id
-    assert result.evidence_chain or result.point_hits
+    assert len(result.trait_diagnostics) == 8
+    assert result.ability_level
+    assert result.evidence_chain
+    assert not result.point_hits
+
     tier = ScoringTier("t4", "四类文", 0, 15)
-    engine_zero = ScoringEngineResult(
+    engine_trait = ScoringEngineResult(
         exam_level="municipal",
         level_inferred=True,
         level_config_version="1.0.0",
-        point_pool_version="1.0.0",
-        total_score=0.0,
+        point_pool_version="essay-trait-v1.0.0",
+        total_score=27.0,
         max_score=40.0,
         tier=tier,
         dimension_rows=[],
         point_hits=[],
         penalties={},
-        confidence=0.6,
+        confidence=0.78,
         level_specific_feedback="",
         evidence_chain=[],
         engine_traces=[],
-        deliberation_triggered=False,
-        deliberation_note="",
+        trait_diagnostics=[_TRAIT_ROW],
+        system_center_score=27.0,
+        score_interval=(25.0, 29.0),
+        suppress_absolute_score=False,
     )
-    llm_payload = normalize_llm_report_payload(
-        {"total_score": 0, "综合评分": {"总分": "31.5 / 40"}},
-    )
-    merged = merge_engine_with_llm_payload(
-        engine_zero,
-        llm_payload,
-        max_llm_delta=4.0,
-        max_score=40.0,
-    )
-    assert merged["total_score"] == 31.5, merged
-    assert merged.get("engine_total_discarded") is True
+    llm_mid = normalize_llm_report_payload({"total_score": 31.0})
+    merged = merge_engine_with_llm_payload(engine_trait, llm_mid, max_score=40.0)
+    assert merged["total_score"] == 27.0, merged
+    assert merged.get("llm_total_discarded") is True
+    assert merged.get("trait_score_spine") is True
 
-    from dataclasses import replace
+    engine_suppressed = replace(engine_trait, suppress_absolute_score=True, total_score=0.0)
+    merged2 = merge_engine_with_llm_payload(engine_suppressed, llm_mid, max_score=40.0)
+    assert merged2["total_score"] == 0.0
+    assert merged2.get("display_mode") == "reference_only"
 
-    engine_low = replace(engine_zero, total_score=3.3)
-    llm_mid = normalize_llm_report_payload(
-        {
-            "total_score": 31.0,
-            "scoring_points": [
-                {"label": "立意与观点", "earned": 7.8, "max": 10, "hit": "partial"},
-                {"label": "结构与层次", "earned": 7.5, "max": 10, "hit": "partial"},
-                {"label": "论证与素材", "earned": 7.6, "max": 10, "hit": "partial"},
-                {"label": "语言表达", "earned": 8.1, "max": 10, "hit": "partial"},
-            ],
-            "review_notes": "因此止步二类中段，难以进入一类。",
-        },
+    engine_interval = replace(
+        engine_trait,
+        score_display_mode="interval",
+        score_uncalibrated=True,
+        total_score=0.0,
     )
-    merged2 = merge_engine_with_llm_payload(engine_low, llm_mid, max_llm_delta=4.0, max_score=40.0)
-    assert merged2["total_score"] == 31.0, merged2
-    assert merged2.get("engine_total_discarded") is True
+    merged3 = merge_engine_with_llm_payload(engine_interval, llm_mid, max_score=40.0)
+    assert merged3["total_score"] == 0.0
+    assert merged3.get("display_mode") == "interval_only"
 
     print("verify_scoring_engine: ok")
 

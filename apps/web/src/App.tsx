@@ -12,6 +12,9 @@ import AdminDisputesPage from "./pages/admin/AdminDisputesPage";
 import AdminJobsPage from "./pages/admin/AdminJobsPage";
 import AdminEventsPage from "./pages/admin/AdminEventsPage";
 import AdminStandardsPage from "./pages/admin/AdminStandardsPage";
+import AdminAnchorEssaysPage from "./pages/admin/AdminAnchorEssaysPage";
+import AdminAnchorAnnotationPage from "./pages/admin/AdminAnchorAnnotationPage";
+import AdminActiveLearningPage from "./pages/admin/AdminActiveLearningPage";
 import ActivatePage from "./pages/ActivatePage";
 import GradingPage from "./pages/GradingPage";
 import GradingProgressPage from "./pages/GradingProgressPage";
@@ -67,6 +70,9 @@ export default function App() {
               <Route path="codes" element={<AdminCodesPage />} />
               <Route path="events" element={<AdminEventsPage />} />
               <Route path="standards" element={<AdminStandardsPage />} />
+              <Route path="anchors" element={<AdminAnchorEssaysPage />} />
+              <Route path="anchor-annotation" element={<AdminAnchorAnnotationPage />} />
+              <Route path="active-learning" element={<AdminActiveLearningPage />} />
             </Route>
           </Route>
         </Route>

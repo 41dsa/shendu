@@ -3,7 +3,14 @@ import { Link } from "react-router-dom";
 
 const LINKS = [
   { to: "/admin/standards", title: "考试标准引擎", desc: "资料上传、标准生成任务、验证预览与发布（大作文 Rubric）。" },
-  { to: "/admin/prompts", title: "Prompt 版本", desc: "管理大作文批改系统 Prompt，设为生效后用户批改立即使用新版本。" },
+  { to: "/admin/anchors", title: "锚作文", desc: "按题录入 L0～L4 锚、发布开关与 10～20 篇覆盖统计（相对尺度）。" },
+  { to: "/admin/anchor-annotation", title: "锚 Trait 标注", desc: "多评者 Trait 档位 + 原文证据 + 争议说明（AN-02/03）。" },
+  { to: "/admin/active-learning", title: "主动学习池", desc: "难例队列、优先级与 JSONL 导出（AL-01～06）。" },
+  {
+    to: "/admin/prompts",
+    title: "Prompt 版本",
+    desc: "批改报告润色 Prompt（V1 必留）；标准生产 P01～P07 仅在 LLM 生成标准卡时使用。",
+  },
   { to: "/admin/gold", title: "金标回归", desc: "录入金标作文、跑分对比期望区间，监控 Prompt/模型漂移。" },
   { to: "/admin/questions", title: "金标参考题", desc: "维护评测用题干/材料（不对学员展示；用户端自备材料批改）。" },
   { to: "/admin/disputes", title: "评分争议", desc: "处理用户争议，AI 复核说明与 CSV 导出。" },

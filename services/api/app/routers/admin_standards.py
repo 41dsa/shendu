@@ -4,6 +4,7 @@ import csv
 import io
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -15,6 +16,7 @@ from app.models.entities import (
     Question,
     SourceLevel,
     StandardDocument,
+    EssayImportAudit,
     StandardGenerationJob,
     StandardGenerationJobStatus,
     StandardJobStep,
@@ -24,6 +26,7 @@ from app.schemas.standard_engine import (
     ExamStandardPublishRequest,
     JobRubricDraftPatch,
     LinkDocumentsRequest,
+    StandardCardReviewRequest,
     StandardDocumentCreateRequest,
     StandardJobCreateRequest,
 )
@@ -38,17 +41,33 @@ from app.services.standard_engine.structure_service import get_linked_document_i
 from app.services.standard_engine.ingest_service import ingest_uploaded_file, save_upload_bytes
 from app.services.standard_engine.metrics_eval import evaluate_annotation_csv
 from app.services.standard_engine.publish_service import PublishBlockedError, publish_standard_from_job, rollback_standard_version
+from app.services.standard_engine.standard_card_review_service import (
+    get_job_standard_card_v1,
+    list_standard_card_review_queue,
+    review_standard_card,
+)
 from app.services.standard_engine.standard_store import get_active_standard_row
 from app.services.standard_engine.structure_service import (
     build_structured_essay,
     link_documents_to_question,
-    upsert_question_from_row,
 )
 from app.worker.tasks import enqueue_standard_generation_job
 
 router = APIRouter(prefix="/admin/standards", tags=["admin-standards"])
 
 _ANNOTATION_CSV_ALLOWLIST = frozenset({"questions_for_labeling.csv", "annotation_template.csv"})
+
+
+@router.get("/engine-config")
+def get_standard_engine_config(_: User = Depends(require_admin)) -> dict:
+    """运维：标准引擎与 PRD V1 相关开关（只读）。"""
+    return {
+        "standard_consensus_3model_enabled": bool(settings.standard_consensus_3model_enabled),
+        "standard_consensus_min_score": float(settings.standard_consensus_min_score),
+        "standard_publish_min_confidence": float(settings.standard_publish_min_confidence),
+        "trait_llm_voting_enabled": bool(settings.trait_llm_voting_enabled),
+        "weak_supervision_enabled": bool(settings.weak_supervision_enabled),
+    }
 
 
 def _summarize_jobs_steps(db: Session, job_ids: list[str]) -> dict[str, dict]:
@@ -272,20 +291,89 @@ def link_question_documents(
     return {"question_id": question_id, "essay": essay.model_dump()}
 
 
+class EssayItemsJsonImportBody(BaseModel):
+    """Q-03：JSON 批量导入 EssayItem。"""
+
+    source: str = "json"
+    filename: str | None = None
+    lock_a_fields: bool = True
+    items: list[dict] = Field(default_factory=list)
+
+
+@router.get("/essay-import-audits")
+def list_essay_import_audits(
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+    limit: int = Query(50, ge=1, le=200),
+) -> list[dict]:
+    rows = db.query(EssayImportAudit).order_by(EssayImportAudit.created_at.desc()).limit(limit).all()
+    return [
+        {
+            "id": r.id,
+            "source": r.source,
+            "filename": r.filename,
+            "item_count": r.item_count,
+            "created_count": r.created_count,
+            "updated_count": r.updated_count,
+            "skipped_locked_count": r.skipped_locked_count,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+        }
+        for r in rows
+    ]
+
+
 @router.post("/questions/import-csv")
 async def import_questions_csv(
     file: UploadFile = File(...),
-    _: User = Depends(require_admin),
+    admin: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ) -> dict:
-    """STD-210：批量导入大作文 CSV。"""
+    """STD-210 / Q-03：批量导入大作文 CSV（EssayItem V1 + 审计）。"""
+    from app.services.standard_engine.essay_item_import_service import import_essay_items
+
     raw = (await file.read()).decode("utf-8-sig", errors="replace")
     reader = csv.DictReader(io.StringIO(raw))
-    ids: list[str] = []
-    for row in reader:
-        q = upsert_question_from_row(db, row)
-        ids.append(q.id)
-    return {"count": len(ids), "question_ids": ids}
+    rows = list(reader)
+    result = import_essay_items(
+        db,
+        rows,
+        source="csv",
+        filename=file.filename,
+        admin_user_id=admin.id,
+        lock_a_fields=True,
+    )
+    return {
+        "count": result.item_count,
+        "question_ids": [ln.question_id for ln in result.lines],
+        "created_count": result.created_count,
+        "updated_count": result.updated_count,
+        "skipped_locked_count": result.skipped_locked_count,
+    }
+
+
+@router.post("/questions/import-essay-items-json")
+def import_essay_items_json(
+    body: EssayItemsJsonImportBody,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> dict:
+    from app.services.standard_engine.essay_item_import_service import import_essay_items
+
+    result = import_essay_items(
+        db,
+        body.items,
+        source=body.source,
+        filename=body.filename,
+        admin_user_id=admin.id,
+        lock_a_fields=body.lock_a_fields,
+    )
+    return {
+        "count": result.item_count,
+        "question_ids": [ln.question_id for ln in result.lines],
+        "created_count": result.created_count,
+        "updated_count": result.updated_count,
+        "skipped_locked_count": result.skipped_locked_count,
+    }
 
 
 @router.get("/questions/{question_id}/active")
@@ -417,6 +505,53 @@ def publish_exam_standard_bundle(
         "version": row.version,
         "question_count": (row.payload or {}).get("question_count"),
     }
+
+
+@router.get("/standard-card-review-queue")
+def standard_card_review_queue(_: User = Depends(require_admin), db: Session = Depends(get_db)) -> list[dict]:
+    """M-14：待教研审核的标准卡（validated 且 review_status≠published）。"""
+    return list_standard_card_review_queue(db)
+
+
+@router.get("/jobs/{job_id}/standard-card-v1")
+def get_job_standard_card(job_id: str, _: User = Depends(require_admin), db: Session = Depends(get_db)) -> dict:
+    job = db.get(StandardGenerationJob, job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return get_job_standard_card_v1(db, job_id)
+
+
+@router.post("/jobs/{job_id}/standard-card-review")
+def post_standard_card_review(
+    job_id: str,
+    body: StandardCardReviewRequest,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> dict:
+    try:
+        result = review_standard_card(
+            db,
+            job_id,
+            action=body.action,
+            admin_user_id=admin.id,
+            note=body.note,
+            dispute_marks=body.dispute_marks,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    if body.publish_after and body.action == "approve":
+        try:
+            row = publish_standard_from_job(db, job_id, force=False)
+        except PublishBlockedError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=f"审核已通过但发布被拦截: {exc}",
+            ) from exc
+        result["published"] = True
+        result["standard_version"] = row.version
+        result["standard_id"] = row.id
+    return result
 
 
 @router.post("/jobs/{job_id}/publish")

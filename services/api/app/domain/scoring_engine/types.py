@@ -92,3 +92,24 @@ class ScoringEngineResult:
     deliberation_triggered: bool = False
     deliberation_note: str = ""
     pool_points: list[ScoringPoint] = field(default_factory=list)
+    # PRD V1 Trait 评分引擎输出
+    trait_diagnostics: list[dict[str, Any]] = field(default_factory=list)
+    ability_level: str = ""
+    score_interval: tuple[float, float] | None = None
+    system_center_score: float | None = None
+    score_uncalibrated: bool = False
+    trait_confidence: float = 0.0
+    suppress_absolute_score: bool = False
+    trait_dispute_notes: list[str] = field(default_factory=list)
+    hard_rule_flags: dict[str, Any] = field(default_factory=dict)
+    rubric_version: str = ""
+    question_standard_version: int | None = None
+    standard_match_confidence: float = 0.85
+    primary_loss_traits: list[str] = field(default_factory=list)
+    diagnostic_header: dict[str, Any] = field(default_factory=dict)
+    multi_standard_views: dict[str, Any] = field(default_factory=dict)
+    score_display_mode: str = "center"
+    human_review_recommended: bool = False
+    trait_vote_max_spread: float = 0.0
+    anchor_count: int = 0
+    anchor_relative_scale: dict[str, Any] = field(default_factory=dict)

@@ -26,6 +26,15 @@ export default function AdminGoldPage() {
     queryFn: () => api<QRow[]>("/admin/questions"),
   });
 
+  const { data: calibration } = useQuery({
+    queryKey: ["admin-calibration-metrics"],
+    queryFn: () =>
+      api<{
+        overall_gate_passed: boolean;
+        gold_regression: { qwk: number | null; gate_passed: boolean; gate_reason: string; pair_count: number };
+      }>("/admin/calibration/metrics"),
+  });
+
   const { data: regression } = useQuery({
     queryKey: ["admin-gold-regression"],
     queryFn: () =>
@@ -82,6 +91,15 @@ export default function AdminGoldPage() {
         message="与用户端自备题批改分离"
         description="跑分使用绑定参考题 + 金标作文。纯 AI 金标：services/api 下 seed_ai_gold.py（高/中/低）→ run_ai_gold_regression.py；跑分需管理员 BYOK。"
       />
+      {calibration?.gold_regression ? (
+        <Alert
+          type={calibration.overall_gate_passed ? "success" : "warning"}
+          showIcon
+          style={{ marginBottom: 16 }}
+          message={`V3 校准门禁 · QWK ${calibration.gold_regression.qwk?.toFixed(3) ?? "—"}（${calibration.gold_regression.pair_count} 对金标）`}
+          description={calibration.gold_regression.gate_reason}
+        />
+      ) : null}
       <Statistic title="回归通过率（Δ≤2）" value={regression?.pass_rate ?? "—"} suffix="%" />
       <Statistic title="平均偏差" value={regression?.avg_delta ?? "—"} style={{ marginTop: 16 }} />
       {(regression?.by_standard_version?.length ?? 0) > 0 && (

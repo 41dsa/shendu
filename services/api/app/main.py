@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.database import Base, engine
+from app.schema_patches import apply_schema_patches
 from app.middleware.access_log import SafeAccessLogMiddleware
 from app.routers import (
     admin,
@@ -26,6 +27,15 @@ from app.routers import (
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     Base.metadata.create_all(bind=engine)
+    apply_schema_patches()
+    from app.database import SessionLocal
+    from app.services.prompt_display_names import normalize_prompt_version_display_names
+
+    db = SessionLocal()
+    try:
+        normalize_prompt_version_display_names(db)
+    finally:
+        db.close()
     yield
 
 

@@ -11,6 +11,7 @@ from sqlalchemy import inspect, text
 
 from app.config import settings
 from app.database import Base, SessionLocal, engine
+from app.schema_patches import apply_schema_patches
 from app.domain.essay import DEFAULT_RUBRIC_DIMENSIONS, USER_ESSAY_QUESTION_ID
 from app.models.entities import PromptPurpose, PromptVersion, Question, QuestionType, RedeemCode, RedeemCodeStatus
 from app.services.grading_service import SYSTEM_PROMPT
@@ -166,9 +167,27 @@ def seed_default_prompt(db) -> None:
         return
     db.add(
         PromptVersion(
-            name="内置大作文批改 v1",
+            name="【参考·勿生效】旧版 LLM 主评 v1",
             purpose=PromptPurpose.essay_grading,
             content=SYSTEM_PROMPT,
+            is_active=False,
+        )
+    )
+
+
+def seed_custom_traditional_grading_prompt(db) -> None:
+    if db.query(PromptVersion).filter(PromptVersion.purpose == PromptPurpose.essay_grading_custom).first():
+        return
+    from app.services.custom_traditional_grader import load_default_custom_traditional_prompt
+
+    body = load_default_custom_traditional_prompt()
+    if not body.strip():
+        return
+    db.add(
+        PromptVersion(
+            name="自备四档 · 主评 v1（默认稿）",
+            purpose=PromptPurpose.essay_grading_custom,
+            content=body,
             is_active=True,
         )
     )
@@ -205,6 +224,7 @@ def _seed_reference_documents() -> None:
 
 def main() -> None:
     Base.metadata.create_all(bind=engine)
+    apply_schema_patches()
     ensure_question_columns()
     ensure_submission_columns()
     ensure_gold_run_columns()
@@ -215,7 +235,11 @@ def main() -> None:
         seed_essay_batch_csv(db)
         upsert_user_essay_placeholder(db)
         seed_default_prompt(db)
+        seed_custom_traditional_grading_prompt(db)
         seed_standard_prompts(db)
+        from app.services.prompt_display_names import normalize_prompt_version_display_names
+
+        normalize_prompt_version_display_names(db)
         dev_code = db.get(RedeemCode, DEV_TEST_CODE)
         if not dev_code:
             db.add(RedeemCode(code=DEV_TEST_CODE, sku="lifetime_web", batch_id="dev"))

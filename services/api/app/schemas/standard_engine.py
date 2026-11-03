@@ -163,3 +163,12 @@ class ExamStandardPublishRequest(BaseModel):
     exam: str
     year: int
     essay_policy: dict[str, Any] = Field(default_factory=dict)
+
+
+class StandardCardReviewRequest(BaseModel):
+    """M-14 教研审核标准卡（可选审核后直接发布）。"""
+
+    action: Literal["approve", "reject"]
+    note: str = ""
+    dispute_marks: list[str] | None = None
+    publish_after: bool = False

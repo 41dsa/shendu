@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from app.domain.scoring_engine.level_config import ExamLevelId
-from app.services.essay_context import EssayGradingContext
+from app.domain.essay_grading_context import EssayGradingContext
 
 
 def resolve_exam_level(ctx: EssayGradingContext) -> tuple[ExamLevelId, bool]:

@@ -63,7 +63,8 @@ const STEP_DETAIL_ZH: Record<string, string> = {
   consensus: "共识复核",
   gate_reject: "未通过输入校验，已终止",
   level_adapter: "已匹配考试层级与字数要求",
-  deterministic: "规则引擎匹配要点",
+  deterministic: "Trait 标准执行器",
+  trait_v1: "八大 Trait 诊断评分",
   scored: "规则打分完成",
   passed: "校验通过",
 };

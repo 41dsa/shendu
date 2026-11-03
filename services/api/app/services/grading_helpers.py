@@ -1305,6 +1305,18 @@ def normalize_llm_report_payload(raw: dict[str, Any]) -> dict[str, Any]:
     保留原始键，便于「评分依据」排查。
     """
     payload = dict(raw)
+    final_block = payload.get("最终得分")
+    if isinstance(final_block, dict):
+        parsed_final = _parse_score_value(final_block.get("分数"))
+        if parsed_final is not None and parsed_final >= 0:
+            current = payload.get("total_score")
+            try:
+                current_num = float(current) if current is not None else None
+            except (TypeError, ValueError):
+                current_num = None
+            if current_num is None or current_num <= 0:
+                payload["total_score"] = parsed_final
+
     summary = _payload_section(payload, "综合评分")
     if isinstance(summary, dict):
         parsed = _parse_score_value(summary.get("总分"))

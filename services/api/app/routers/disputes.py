@@ -31,6 +31,26 @@ def submit_dispute(
         raise HTTPException(status_code=400, detail="该报告已提交过争议")
     row = ScoreDispute(user_id=user.id, report_id=report_id, reason=body.reason.strip())
     db.add(row)
+    db.flush()
+    from app.config import settings
+
+    if settings.weak_supervision_enabled:
+        from app.models.entities import GradingJob, Submission
+        from app.services.active_learning_pool import enqueue_dispute_sample
+
+        job = db.get(GradingJob, report.grading_job_id)
+        sub_id = job.submission_id if job else None
+        q_id = None
+        if sub_id:
+            sub = db.get(Submission, sub_id)
+            q_id = sub.question_id if sub else None
+        enqueue_dispute_sample(
+            db,
+            report_id=report_id,
+            submission_id=sub_id,
+            question_id=q_id,
+            reason_text=body.reason.strip(),
+        )
     db.commit()
     db.refresh(row)
     track_event(db, "dispute_submit", user.id, report_id=report_id, dispute_id=row.id)

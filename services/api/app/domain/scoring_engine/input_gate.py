@@ -4,10 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.domain.essay import essay_length_ratio, official_essay_char_count
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from app.services.essay_context import EssayGradingContext
+from app.domain.essay_grading_context import EssayGradingContext, word_bounds_for_context
 
 
 @dataclass
@@ -18,7 +15,7 @@ class GateDecision:
     short_circuit_payload: dict[str, Any] | None = None
 
 
-def run_input_gate(ctx: "EssayGradingContext", content: str) -> GateDecision:
+def run_input_gate(ctx: EssayGradingContext, content: str) -> GateDecision:
     text = content.strip()
     word_min, word_max = _word_bounds(ctx)
     char_count = official_essay_char_count(text)
@@ -33,13 +30,11 @@ def run_input_gate(ctx: "EssayGradingContext", content: str) -> GateDecision:
     return GateDecision(True, word_ratio=word_ratio)
 
 
-def _word_bounds(ctx: "EssayGradingContext") -> tuple[int, int]:
-    from app.services.essay_context import word_bounds_for_context
-
+def _word_bounds(ctx: EssayGradingContext) -> tuple[int, int]:
     return word_bounds_for_context(ctx)
 
 
-def _short_payload(ctx: "EssayGradingContext", reason: str, word_ratio: float) -> dict[str, Any]:
+def _short_payload(ctx: EssayGradingContext, reason: str, word_ratio: float) -> dict[str, Any]:
     return {
         "total_score": 0,
         "score_range": [0, 0],

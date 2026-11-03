@@ -72,6 +72,11 @@ export default function AppLayout() {
           </Space>
         </Header>
         <Content className="app-content">
+          <div style={{ padding: "8px 24px 0", maxWidth: 1200, margin: "0 auto" }}>
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              AI 辅助诊断，非官方评分；报告区间与能力等级未经命题方校准，请勿对外宣称准确估分。
+            </Typography.Text>
+          </div>
           <Outlet />
         </Content>
       </Layout>

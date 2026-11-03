@@ -3,8 +3,15 @@ import re
 
 import httpx
 
+from app.config import settings
 from app.core.crypto import decrypt_secret
 from app.models.entities import CredentialRole, UserProviderCredential
+
+
+def ai_http_client(**kwargs: object) -> httpx.AsyncClient:
+    """OpenAI 兼容调用：默认 trust_env=False，直连 Base URL，避免误走本机代理。"""
+    trust_env = kwargs.pop("trust_env", settings.ai_http_trust_env)
+    return httpx.AsyncClient(trust_env=trust_env, **kwargs)  # type: ignore[arg-type]
 
 
 class AiCallError(Exception):
@@ -129,14 +136,14 @@ async def test_connection(cred: UserProviderCredential) -> dict:
     }
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with ai_http_client(timeout=30.0) as client:
             resp = await client.post(url, json=payload, headers=headers)
     except httpx.RequestError as exc:
         raise AiCallError("NETWORK", str(exc)) from exc
 
     if resp.status_code == 400:
         payload.pop("response_format", None)
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with ai_http_client(timeout=30.0) as client:
             resp2 = await client.post(url, json=payload, headers=headers)
         if resp2.status_code < 400:
             return {
@@ -151,7 +158,7 @@ async def test_connection(cred: UserProviderCredential) -> dict:
             "max_tokens": 16,
             "temperature": 0,
         }
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with ai_http_client(timeout=30.0) as client:
             resp3 = await client.post(url, json=payload_minimal, headers=headers)
         if resp3.status_code < 400:
             return {
@@ -177,8 +184,11 @@ async def chat_completion_json(cred: UserProviderCredential, system: str, user: 
     timeout = httpx.Timeout(connect=15.0, read=120.0, write=30.0, pool=15.0)
 
     async def _post(payload: dict) -> httpx.Response:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            return await client.post(url, json=payload, headers=headers)
+        try:
+            async with ai_http_client(timeout=timeout) as client:
+                return await client.post(url, json=payload, headers=headers)
+        except httpx.RequestError as exc:
+            raise AiCallError("NETWORK", str(exc) or type(exc).__name__) from exc
 
     payload_json = {
         "model": cred.model,
@@ -228,8 +238,11 @@ async def chat_completion_text(
         "temperature": temperature,
         "max_tokens": max_tokens,
     }
-    async with httpx.AsyncClient(timeout=180.0) as client:
-        resp = await client.post(url, json=payload, headers=headers)
+    try:
+        async with ai_http_client(timeout=180.0) as client:
+            resp = await client.post(url, json=payload, headers=headers)
+    except httpx.RequestError as exc:
+        raise AiCallError("NETWORK", str(exc) or type(exc).__name__) from exc
     if resp.status_code >= 400:
         _raise_for_response(resp, context="模型调用失败")
     data = resp.json()

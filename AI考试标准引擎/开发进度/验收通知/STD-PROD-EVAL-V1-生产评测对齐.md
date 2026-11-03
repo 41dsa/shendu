@@ -2,9 +2,20 @@
 
 | 项目 | 内容 |
 |------|------|
-| 状态 | **待验收** |
+| 状态 | **自动化已通过**（2026-10-16；产品签核待填） |
 | 依据 | [AI考试标准生产与评测引擎-对齐说明.md](../../AI考试标准生产与评测引擎-对齐说明.md) |
 | 范围 | 大作文 Track-A；不含小题采分点 Track-B |
+
+## PRD V1 诊断教练映射（DEP-04，2026）
+
+| 旧 STD-PROD 表述 | 现网 V1 脊柱 |
+|------------------|--------------|
+| ④ 分层评分引擎 + 确定性总分 | **`diagnostic_trait_v1`**：`v1_engine` + Trait 区间，LLM 总分弱标签 |
+| 采分点池 L0～L3 批改 | **已废弃批改路径**；点池仅标准生产可选（`point_pool_pipeline_enabled`） |
+| 证据链 | Trait `evidence_engine` + 报告 `evidence_chain` |
+| 校准/QWK | **V3**；V1 用锚作文相对尺度 + `anchor_count` 控制展示 |
+| 合规门禁 | `python scripts/verify_prd_v1_compliance.py`（CI：`std-engine-ai.yml`） |
+| V3 校准 | `python scripts/verify_v3_calibration_gate.py`；运维 `run_calibration_gate.py` |
 
 ## 交付摘要
 
@@ -23,9 +34,11 @@
 ```bash
 cd services/api && source .venv/bin/activate
 python scripts/verify_prod_eval_alignment.py
+python scripts/verify_prd_v1_compliance.py
 python scripts/verify_scoring_engine.py
 python scripts/verify_standard_pipeline_stub.py
 python scripts/verify_std_e_suite.py
+python scripts/verify_trait_stability.py
 ```
 
 ### Admin / 产品（建议）

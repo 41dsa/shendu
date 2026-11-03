@@ -1,14 +1,15 @@
 """从 submission + question 解析大作文批改上下文（支持用户自备题干/材料）。"""
 
-from dataclasses import dataclass, field
-from typing import Any
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy.orm import Session
 
 from app.domain.custom_exam_level import exam_level_from_profile, normalize_exam_level
-from app.domain.essay import DEFAULT_RUBRIC_DIMENSIONS, USER_ESSAY_QUESTION_ID, essay_word_bounds
+from app.domain.essay import DEFAULT_RUBRIC_DIMENSIONS, USER_ESSAY_QUESTION_ID
+from app.domain.essay_grading_context import EssayGradingContext, word_bounds_for_context
 from app.domain.scoring_engine.level_config import ExamLevelId
-from app.models.entities import ExamProfile, Question, QuestionType, Submission
 from app.services.standard_engine.exam_standard_service import get_active_exam_standard
 from app.services.standard_engine.custom_essay_standard import get_cached_custom_payload
 from app.services.standard_engine.standard_store import (
@@ -17,35 +18,19 @@ from app.services.standard_engine.standard_store import (
     rubric_dimensions_from_payload,
 )
 
+if TYPE_CHECKING:
+    from app.models.entities import ExamProfile, Question, Submission
 
-@dataclass
-class EssayGradingContext:
-    title: str
-    prompt: str
-    reference_material: str | None
-    material_structured: dict[str, Any] | None
-    scoring_points: list[Any]
-    score: int
-    word_limit: int
-    question_type: QuestionType
-    cache_context_key: str
-    focus_points: list[str] = field(default_factory=list)
-    loss_rules: list[Any] = field(default_factory=list)
-    rubric_criteria: list[Any] = field(default_factory=list)
-    score_confidence_declaration: str | None = None
-    standard_version: int | None = None
-    exam_policy: dict[str, Any] | None = None
-    exam_standard_version: int | None = None
-    question_id: str = ""
-    point_pools: dict[str, Any] | None = None
-    exam_level: ExamLevelId | None = None
+__all__ = ["EssayGradingContext", "word_bounds_for_context", "resolve_essay_context"]
 
 
 def resolve_essay_context(
-    submission: Submission,
-    question: Question | None,
+    submission: "Submission",
+    question: "Question | None",
     db: Session | None = None,
 ) -> EssayGradingContext:
+    from app.models.entities import ExamProfile
+
     if not question:
         raise ValueError("QUESTION_NOT_FOUND")
 
@@ -64,9 +49,11 @@ def resolve_essay_context(
     rubric_criteria: list[Any] = []
     score_confidence_declaration: str | None = None
     standard_version: int | None = None
+    standard_review_status: str | None = None
     exam_policy: dict[str, Any] | None = None
     exam_standard_version: int | None = None
     point_pools: dict[str, Any] | None = None
+    question_standard: dict[str, Any] | None = None
     active: dict[str, Any] | None = None
     if custom and db is not None:
         active = get_cached_custom_payload(db, submission, question)
@@ -77,6 +64,7 @@ def resolve_essay_context(
         if dims:
             scoring = dims
         q_std = active.get("question_standard") or {}
+        question_standard = dict(q_std) if q_std else None
         focus_points = list(q_std.get("focus_points") or [])
         loss_rules = list(active.get("loss_rules") or [])
         rubric_criteria = rubric_criteria_from_payload(active)
@@ -85,6 +73,7 @@ def resolve_essay_context(
         score_confidence_declaration = rules.get("score_confidence_declaration")
         meta = active.get("_meta") or {}
         standard_version = meta.get("version")
+        standard_review_status = str(meta.get("status") or "published")
         from app.services.scoring_engine.pool_loader import point_pools_from_payload
 
         point_pools = point_pools_from_payload(active)
@@ -135,17 +124,11 @@ def resolve_essay_context(
         rubric_criteria=rubric_criteria,
         score_confidence_declaration=score_confidence_declaration,
         standard_version=standard_version,
+        standard_review_status=standard_review_status,
         exam_policy=exam_policy,
         exam_standard_version=exam_standard_version,
         question_id=question.id,
         point_pools=point_pools,
+        question_standard=question_standard,
         exam_level=resolved_level,
     )
-
-
-def word_bounds_for_context(ctx: EssayGradingContext) -> tuple[int, int]:
-    if ctx.exam_policy:
-        wr = ctx.exam_policy.get("typical_word_range")
-        if isinstance(wr, (list, tuple)) and len(wr) >= 2:
-            return int(wr[0]), int(wr[1])
-    return essay_word_bounds(ctx.material_structured, ctx.word_limit)

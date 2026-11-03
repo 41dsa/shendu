@@ -7,7 +7,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.database import SessionLocal
-from app.services.standard_engine.structure_service import upsert_question_from_row
+from app.services.standard_engine.essay_item_import_service import import_essay_items
 
 
 def main() -> None:
@@ -20,14 +20,15 @@ def main() -> None:
         sys.exit(1)
 
     db = SessionLocal()
-    count = 0
     try:
         with path.open(encoding="utf-8-sig") as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                upsert_question_from_row(db, row)
-                count += 1
-        print(f"imported/updated {count} questions from {path}")
+            rows = list(csv.DictReader(f))
+        result = import_essay_items(db, rows, source="csv_cli", filename=str(path), lock_a_fields=True)
+        print(
+            f"imported {result.item_count} from {path}: "
+            f"created={result.created_count} updated={result.updated_count} "
+            f"skipped_locked={result.skipped_locked_count}"
+        )
     finally:
         db.close()
 

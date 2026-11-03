@@ -1,0 +1,146 @@
+{
+  "rubric_version": "essay-trait-v1.0.2",
+  "ability_by_level": {
+    "L4": "强",
+    "L3": "较强",
+    "L2": "一般",
+    "L1": "较弱",
+    "L0": "严重缺失"
+  },
+  "traits": {
+    "T1": {
+      "name": "审题与任务完成",
+      "standard_tier": "B",
+      "participates_in_score": true,
+      "dimension_ids": [],
+      "levels": {
+        "L4": "准确理解题目任务与关键词，写作边界清晰",
+        "L3": "基本理解题目任务，关键词覆盖较全",
+        "L2": "部分理解任务，边界略模糊",
+        "L1": "任务理解较弱，扣题不充分",
+        "L0": "未回应题目任务或严重偏题"
+      },
+      "plus_conditions": ["关键词与任务要求全覆盖", "未越界写对策或跑题"],
+      "minus_conditions": ["遗漏核心关键词", "文体或身份对象错误导致偏题"]
+    },
+    "T2": {
+      "name": "立意与中心论点",
+      "standard_tier": "C",
+      "participates_in_score": false,
+      "dimension_ids": ["D01"],
+      "levels": {
+        "L4": "中心论点准确、完整、针对性强",
+        "L3": "立意基本准确，能回应主题",
+        "L2": "立意可辨但偏泛或不够聚焦",
+        "L1": "立意偏差或中心不明确",
+        "L0": "无明确中心或严重偏题"
+      },
+      "plus_conditions": ["中心论点可一句话概括且贯穿全文", "与题目主题同向"],
+      "minus_conditions": ["中心摇摆或多中心", "与材料/题干立场相悖"]
+    },
+    "T3": {
+      "name": "分论点与结构",
+      "standard_tier": "B",
+      "participates_in_score": true,
+      "dimension_ids": ["D02"],
+      "levels": {
+        "L4": "分论点清晰支撑中心，层次分明",
+        "L3": "结构完整，层次基本清楚",
+        "L2": "有结构但分论点支撑一般",
+        "L1": "结构松散或层次混乱",
+        "L0": "结构严重缺失"
+      },
+      "plus_conditions": ["起承转合完整", "分论点与中心一一对应"],
+      "minus_conditions": ["段落堆砌无层次", "缺少开头或结尾"]
+    },
+    "T4": {
+      "name": "材料转化与论据",
+      "standard_tier": "B",
+      "participates_in_score": true,
+      "dimension_ids": ["D03"],
+      "levels": {
+        "L4": "有效转化材料为论据，非机械抄写",
+        "L3": "有材料使用，转化基本到位",
+        "L2": "材料使用一般，分析偏少",
+        "L1": "材料堆砌或转化不足",
+        "L0": "大段抄写材料"
+      },
+      "plus_conditions": ["引用后有自己的分析句", "论据支撑分论点"],
+      "minus_conditions": ["大段原文粘贴", "材料与观点无关"]
+    },
+    "T5": {
+      "name": "论证完整性",
+      "standard_tier": "B",
+      "participates_in_score": true,
+      "dimension_ids": ["D03"],
+      "levels": {
+        "L4": "观点-证据-解释-结论链完整",
+        "L3": "论证链基本完整，分析环节略弱",
+        "L2": "有论证但链条不完整",
+        "L1": "论证单薄",
+        "L0": "几乎无论证"
+      },
+      "plus_conditions": ["多数段落有分析推进", "结论回扣中心"],
+      "minus_conditions": ["只有表态无解释", "论据与观点脱节"]
+    },
+    "T6": {
+      "name": "分析深度",
+      "standard_tier": "C",
+      "participates_in_score": false,
+      "dimension_ids": ["D03"],
+      "levels": {
+        "L4": "能分析原因、机制、影响与本质，有辩证思维",
+        "L3": "有一定分析深度，能触及原因或影响",
+        "L2": "分析停留在表面",
+        "L1": "缺乏分析，多为表态",
+        "L0": "无分析"
+      },
+      "plus_conditions": ["出现因果/机制/影响分析", "有适度辩证"],
+      "minus_conditions": ["通篇口号", "分析重复同义反复"]
+    },
+    "T7": {
+      "name": "对策与治理思维",
+      "standard_tier": "C",
+      "participates_in_score": false,
+      "dimension_ids": [],
+      "levels": {
+        "L4": "对策针对问题、具体可行，符合公共治理逻辑",
+        "L3": "对策基本可行，与问题有一定对应",
+        "L2": "对策较空泛或针对性不足",
+        "L1": "对策明显脱离问题",
+        "L0": "无对策或完全无效"
+      },
+      "plus_conditions": ["对策与前文问题对应", "主体手段清晰"],
+      "minus_conditions": ["对策空洞套话", "与题意无关的举措堆砌"]
+    },
+    "T8": {
+      "name": "语言与规范",
+      "standard_tier": "B",
+      "participates_in_score": true,
+      "dimension_ids": ["D04"],
+      "levels": {
+        "L4": "语言规范流畅，符合申论文体",
+        "L3": "语言基本规范",
+        "L2": "语言一般，有少量问题",
+        "L1": "语病或口语化明显",
+        "L0": "语言严重不规范"
+      },
+      "plus_conditions": ["政论文体、逻辑连接自然", "字数与格式符合要求"],
+      "minus_conditions": ["口语网络化严重", "语病影响理解"]
+    }
+  },
+  "view_templates": {
+    "c_trait_dual_view": "严格视角约 {strict_level}，宽松视角约 {loose_level}：{trait_name}存在标准依赖（当前诊断 {level}），不参与得分合成。",
+    "strict_score_label": "严格标准（区间偏下限）",
+    "loose_score_label": "宽松标准（区间偏上限）",
+    "baseline_score_label": "综合标准（加权）",
+    "dependency_section_label": "标准依赖型维度（不参与得分合成）"
+  },
+  "default_scorable_weights": {
+    "T1": 0.22,
+    "T3": 0.16,
+    "T4": 0.16,
+    "T5": 0.22,
+    "T8": 0.12
+  }
+}

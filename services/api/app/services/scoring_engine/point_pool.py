@@ -1,4 +1,4 @@
-"""将 RubricCriterion / 维度 / focus_points 适配为评分引擎采分点池。"""
+"""将 RubricCriterion / 维度 / focus_points 适配为采分点池（DEPRECATED：批改路径已切换 Trait V1，仅遗留/对照）。"""
 
 from __future__ import annotations
 

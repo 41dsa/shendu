@@ -31,6 +31,23 @@ import {
 } from "../utils/reportPayload";
 import EssayHighlightView from "../components/EssayHighlightView";
 import ReportDimensionCriteria from "../components/ReportDimensionCriteria";
+import ReportTraitDiagnostic from "../components/ReportTraitDiagnostic";
+import ReportPrdDisclaimer from "../components/ReportPrdDisclaimer";
+import {
+  isTraitV1Report,
+  parseDiagnosticHeader,
+  parseTraitDiagnostics,
+  resolveAbilityLevel,
+  resolveHumanReviewRecommended,
+  resolveHumanReviewNote,
+  resolveStandardDisputeMarks,
+  resolveAnchorCount,
+  resolveAnchorRelativeScale,
+  resolveMultiStandardViews,
+  resolveScoreDisclaimer,
+  resolveScoreDisplayMode,
+  resolveTraitConfidence,
+} from "../utils/traitDiagnostic";
 import ReportEssayExcerpt from "../components/ReportEssayExcerpt";
 import { issueAnalysisText, issueBadgeText, issueComparisonKey } from "../utils/issueDisplay";
 import { resolveIssueExcerptDisplay } from "../utils/essayLocate";
@@ -213,7 +230,35 @@ export default function ReportPage() {
     (basisData?.basis?.grading_standard_mode as string | undefined);
   const confidence = String(p.confidence ?? "medium");
   const shortCircuit = Boolean(p.short_circuit_reason);
-  const displayReferenceOnly = p.display_mode === "reference_only" && shortCircuit;
+  const traitV1 = isTraitV1Report(p);
+  const abilityLevel = resolveAbilityLevel(p);
+  const traitDisclaimer = resolveScoreDisclaimer(p);
+  const traitConfidence = resolveTraitConfidence(p);
+  const engBlock = p.scoring_engine as Record<string, unknown> | undefined;
+  const traitIntervalRaw = (p.score_range as number[] | undefined) ??
+    (engBlock?.score_interval as number[] | undefined);
+  const traitScoreRange =
+    Array.isArray(traitIntervalRaw) && traitIntervalRaw.length >= 2
+      ? ([Number(traitIntervalRaw[0]), Number(traitIntervalRaw[1])] as [number, number])
+      : null;
+  const scoreDisplayMode =
+    (p.score_display_mode as string | undefined) ??
+    (engBlock?.score_display_mode as string | undefined);
+  const intervalOnly =
+    p.display_mode === "interval_only" || scoreDisplayMode === "interval";
+  const hideNumericTotal =
+    p.display_mode === "reference_only" ||
+    scoreDisplayMode === "tier_only" ||
+    Boolean(p.trait_low_confidence) ||
+    shortCircuit;
+  const displayReferenceOnly = hideNumericTotal && !intervalOnly;
+  const humanReviewRecommended = resolveHumanReviewRecommended(p);
+  const humanReviewNote = resolveHumanReviewNote(p);
+  const standardDisputeMarks = resolveStandardDisputeMarks(p);
+  const multiStandardViews = resolveMultiStandardViews(p);
+  const anchorRelativeScale = resolveAnchorRelativeScale(p);
+  const anchorCount = resolveAnchorCount(p);
+  const resolvedScoreDisplayMode = resolveScoreDisplayMode(p);
   const lowScoreConfidence = confidence === "low";
   const rawConfidenceNote = String(p.confidence_note ?? "").trim();
   const confidenceNote =
@@ -328,6 +373,19 @@ export default function ReportPage() {
     undefined;
 
   const enginePointHits = useMemo(() => parsePointHitsFromPayload(p), [p]);
+
+  const traitRows = useMemo(() => parseTraitDiagnostics(p), [p]);
+  const traitSuggestions = useMemo(
+    () =>
+      (Array.isArray(p.suggestions) ? p.suggestions : [])
+        .map((s) => String(s).trim())
+        .filter(Boolean),
+    [p.suggestions],
+  );
+  const diagnosticSeven = useMemo(
+    () => parseDiagnosticHeader(p, { prompt: reportPrompt, suggestions: traitSuggestions }),
+    [p, reportPrompt, traitSuggestions],
+  );
 
   const essayRewriteMarkRanges = useMemo(
     () =>
@@ -517,7 +575,7 @@ export default function ReportPage() {
         </Space>
       }
     >
-      {displayReferenceOnly && (
+      {shortCircuit && (
         <Alert
           type="warning"
           showIcon
@@ -526,6 +584,34 @@ export default function ReportPage() {
           style={{ marginBottom: 16 }}
         />
       )}
+      {traitV1 ? (
+        <ReportPrdDisclaimer
+          disclaimer={traitDisclaimer}
+          nonOfficialNotice={String(p.non_official_notice ?? "")}
+        />
+      ) : null}
+
+      {traitV1 && humanReviewRecommended && !shortCircuit ? (
+        <Alert
+          type="warning"
+          showIcon
+          message="建议人工复核"
+          description={
+            humanReviewNote ||
+            "引擎置信度偏低或模型分歧较大，请勿将分数当作精确估分，重点阅读 Trait 证据与修改建议。"
+          }
+          style={{ marginBottom: 16 }}
+        />
+      ) : null}
+      {traitV1 && Boolean(p.trait_low_confidence) && !shortCircuit && !humanReviewRecommended ? (
+        <Alert
+          type="info"
+          showIcon
+          message="建议以 Trait 诊断为主"
+          description="本题置信度偏低或未校准，精确总分已隐藏；请重点阅读八大 Trait 证据与修改建议。"
+          style={{ marginBottom: 16 }}
+        />
+      ) : null}
       {showConfidenceAlert ? (
         <Alert
           type="warning"
@@ -539,11 +625,36 @@ export default function ReportPage() {
         />
       ) : null}
 
+      {traitV1 && traitRows.length > 0 ? (
+        <ReportTraitDiagnostic
+          traits={traitRows}
+          seven={diagnosticSeven}
+          abilityLevel={abilityLevel}
+          scoreRange={traitScoreRange ?? range}
+          traitConfidence={traitConfidence}
+          disclaimer={traitDisclaimer}
+          hideNumericScore={hideNumericTotal && !intervalOnly}
+          scoreDisplayMode={resolvedScoreDisplayMode}
+          humanReviewRecommended={humanReviewRecommended}
+          multiStandardViews={multiStandardViews}
+          anchorRelativeScale={anchorRelativeScale}
+          anchorCount={anchorCount}
+          standardDisputeMarks={standardDisputeMarks}
+        />
+      ) : null}
+
       <Space wrap align="center">
         <Typography.Title level={2} style={{ margin: 0 }}>
-          {displayReferenceOnly ? "—" : String(p.total_score ?? "-")} / {maxScore}
+          {hideNumericTotal ? "—" : String(p.total_score ?? "-")} / {maxScore}
         </Typography.Title>
-        {range ? (
+        {abilityLevel && traitV1 ? <Tag color="processing">能力 {abilityLevel}</Tag> : null}
+        {(intervalOnly || (range && !hideNumericTotal)) && traitScoreRange ? (
+          <Tag>
+            估计区间 {traitScoreRange[0]}～{traitScoreRange[1]} 分
+            {intervalOnly ? "（未校准，不展示中心分）" : ""}
+          </Tag>
+        ) : null}
+        {range && !hideNumericTotal && !intervalOnly ? (
           <Tag>合理区间 {range[0]}～{range[1]} 分</Tag>
         ) : null}
         <Tag color={CONF_TAG_COLOR[confidence] ?? "blue"}>
@@ -639,9 +750,11 @@ export default function ReportPage() {
 
       <Row gutter={16} style={{ marginTop: 24 }}>
         <Col span={14}>
-          <Typography.Title level={5}>各维度得分</Typography.Title>
+          <Typography.Title level={5}>{traitV1 ? "兼容维度视图" : "各维度得分"}</Typography.Title>
           <Typography.Paragraph type="secondary" style={{ marginBottom: 12, fontSize: 13 }}>
-            维度分用于看强弱分布；顶部总分为整卷结论。若某一维显示 0 分而总分不低，多为自动采分未检出该维要点，可结合总评与下方说明理解。
+            {traitV1
+              ? "下列条目由八大 Trait 映射，便于与旧版能力维度对照；正式诊断以上方 Trait 分项与证据为准。"
+              : "维度分用于看强弱分布；顶部总分为整卷结论。若某一维显示 0 分而总分不低，多为自动采分未检出该维要点，可结合总评与下方说明理解。"}
           </Typography.Paragraph>
           <List
             grid={{ gutter: 8, column: 1 }}

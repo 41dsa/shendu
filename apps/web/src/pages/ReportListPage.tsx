@@ -18,7 +18,14 @@ export default function ReportListPage() {
   });
 
   return (
-    <Card title="批改报告">
+    <Card
+      title="批改报告"
+      extra={
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          AI 辅助诊断，非官方分数
+        </Typography.Text>
+      }
+    >
       {isLoading ? (
         <Typography.Text type="secondary">加载中…</Typography.Text>
       ) : !data?.length ? (

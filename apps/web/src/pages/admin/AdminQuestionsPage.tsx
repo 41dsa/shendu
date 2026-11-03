@@ -1,7 +1,16 @@
-import { Alert, Button, Card, Form, Input, InputNumber, List, Modal, message } from "antd";
+import { Alert, Button, Card, Form, Input, InputNumber, Modal, Space, Table, Tag, message } from "antd";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { api } from "../../api/client";
+
+type StandardLink = {
+  has_active_standard: boolean;
+  standard_version: number | null;
+  review_status: string | null;
+  published_at: string | null;
+  source_job_id: string | null;
+};
 
 type QRow = {
   id: string;
@@ -13,6 +22,8 @@ type QRow = {
   material_structured?: { word_min?: number; word_max?: number };
   scoring_points: unknown[];
   published: boolean;
+  standard_link?: StandardLink;
+  essay_item_locked?: boolean;
 };
 
 const DEFAULT_RUBRIC = `[
@@ -86,20 +97,51 @@ export default function AdminQuestionsPage() {
         message="不对学员端展示"
         description="学员在批改页自备材料与题干。此处题目仅用于金标样本绑定、Prompt 回归与教研存档；新建题默认不发布到旧题库 API。"
       />
-      <List
+      <Table
+        rowKey="id"
+        size="small"
         dataSource={data ?? []}
         locale={{ emptyText: "暂无参考题，可先新建或保留 init_db 中的 demo-essay-001 用于金标。" }}
-        renderItem={(item) => (
-          <List.Item
-            actions={[
-              <Button key="e" onClick={() => openEdit(item)}>
-                编辑
-              </Button>,
-            ]}
-          >
-            <List.Item.Meta title={item.title} description={`ID: ${item.id}`} />
-          </List.Item>
-        )}
+        columns={[
+          { title: "标题", dataIndex: "title", ellipsis: true },
+          {
+            title: "题库锁",
+            width: 72,
+            render: (_, row) =>
+              row.essay_item_locked ? <Tag color="blue">A类锁定</Tag> : <Tag>可编辑</Tag>,
+          },
+          { title: "题号", dataIndex: "id", width: 140, ellipsis: true },
+          {
+            title: "生效标准",
+            width: 120,
+            render: (_, row) => {
+              const link = row.standard_link;
+              if (!link?.has_active_standard) return <Tag>未发布</Tag>;
+              return <Tag color="green">v{link.standard_version}</Tag>;
+            },
+          },
+          {
+            title: "标准卡审核",
+            width: 100,
+            render: (_, row) => {
+              const st = row.standard_link?.review_status;
+              if (!row.standard_link?.has_active_standard) return "—";
+              return <Tag>{st ?? "—"}</Tag>;
+            },
+          },
+          {
+            title: "操作",
+            width: 200,
+            render: (_, row) => (
+              <Space size="small">
+                <Button size="small" onClick={() => openEdit(row)}>
+                  编辑
+                </Button>
+                <Link to="/admin/standards">标准引擎</Link>
+              </Space>
+            ),
+          },
+        ]}
       />
       <Modal
         title={editId ? "编辑参考题" : "新建参考题"}

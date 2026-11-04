@@ -31,7 +31,7 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const token = getToken();
   if (token) headers.Authorization = `Bearer ${token}`;
 
-  const res = await fetch(`/api${path}`, { ...init, headers });
+  const res = await fetch(`/shendu/api${path}`, { ...init, headers });
   if (!res.ok) {
     let detail = res.statusText;
     try {
@@ -53,7 +53,7 @@ export async function apiDownload(path: string, filename: string): Promise<void>
   const token = getToken();
   if (token) headers.Authorization = `Bearer ${token}`;
 
-  const res = await fetch(`/api${path}`, { headers });
+  const res = await fetch(`/shendu/api${path}`, { headers });
   if (!res.ok) {
     let detail = res.statusText;
     try {

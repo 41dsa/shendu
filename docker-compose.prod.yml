@@ -19,6 +19,10 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
+    networks:
+      default:
+        aliases:
+          - shendu-redis
 
   api:
     build:
@@ -27,7 +31,7 @@ services:
       - ./services/api/.env
     environment:
       DATABASE_URL: postgresql+psycopg://shendu:${POSTGRES_PASSWORD:-change-me}@db:5432/shendu
-      REDIS_URL: redis://redis:6379/0
+      REDIS_URL: redis://shendu-redis:6379/0
       APP_ENV: production
       CORS_ORIGINS: ${PUBLIC_ORIGIN:-http://localhost:8080}
       RUN_INIT_DB: "1"
@@ -70,7 +74,7 @@ services:
       - ./services/api/.env
     environment:
       DATABASE_URL: postgresql+psycopg://shendu:${POSTGRES_PASSWORD:-change-me}@db:5432/shendu
-      REDIS_URL: redis://redis:6379/0
+      REDIS_URL: redis://shendu-redis:6379/0
       APP_ENV: production
       RUN_INIT_DB: "0"
     volumes:
@@ -87,7 +91,7 @@ services:
       context: .
       dockerfile: apps/web/Dockerfile
     ports:
-      - "${WEB_PORT:-8080}:80"
+      - "8081:80"
     depends_on:
       api:
         condition: service_healthy
@@ -96,3 +100,8 @@ services:
 volumes:
   pgdata_prod:
   uploads_prod:
+
+networks:
+  default:
+    name: docker_default
+    external: true

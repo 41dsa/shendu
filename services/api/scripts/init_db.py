@@ -19,7 +19,7 @@ from app.services.standard_engine.prompt_defaults import STANDARD_PROMPT_BODIES,
 from app.services.standard_engine.structure_service import upsert_question_from_row
 
 ESSAY_BATCH_CSV = (
-    Path(__file__).resolve().parents[3] / "data/standards/国考/2024/demo_essay_batch.csv"
+    Path(__file__).resolve().parents[1] / "data/standards/国考/2024/demo_essay_batch.csv"
 )
 
 DEV_TEST_CODE = "TEST-DEV-LICENSE"
@@ -74,15 +74,20 @@ def ensure_question_columns() -> None:
     if "questions" not in insp.get_table_names():
         return
     cols = {c["name"] for c in insp.get_columns("questions")}
-    with engine.begin() as conn:
-        if "prompt" not in cols:
+    if "prompt" not in cols:
+        with engine.begin() as conn:
             conn.execute(text("ALTER TABLE questions ADD COLUMN prompt TEXT DEFAULT ''"))
-        conn.execute(
-            text(
-                "UPDATE questions SET question_type = 'essay' "
-                "WHERE question_type IN ('summarize', 'analysis', 'countermeasure')"
+    try:
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "UPDATE questions SET question_type = 'essay' "
+                    "WHERE question_type IN ('summarize', 'analysis', 'countermeasure')"
+                )
             )
-        )
+    except Exception:
+        pass  # enum values may not exist in fresh DB
+    with engine.begin() as conn:
         conn.execute(text("DELETE FROM questions WHERE title = '基层治理存在问题归纳'"))
 
 

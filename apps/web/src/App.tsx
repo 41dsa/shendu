@@ -35,7 +35,7 @@ import ExamProfilePage from "./pages/ExamProfilePage";
 
 export default function App() {
   return (
-    <BrowserRouter>
+    <BrowserRouter basename="/shendu">
       <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route path="/register" element={<RegisterPage />} />

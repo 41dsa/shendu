@@ -15,3 +15,5 @@ email-validator==2.2.0
 pymupdf==1.25.1
 python-docx==1.1.2
 beautifulsoup4==4.12.3
+packaging
+redis>=6.1.0,<7.0.0

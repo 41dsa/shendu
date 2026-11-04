@@ -241,16 +241,22 @@ def main() -> None:
 
         normalize_prompt_version_display_names(db)
         dev_code = db.get(RedeemCode, DEV_TEST_CODE)
-        if not dev_code:
-            db.add(RedeemCode(code=DEV_TEST_CODE, sku="lifetime_web", batch_id="dev"))
-        elif settings.app_env == "development":
-            dev_code.status = RedeemCodeStatus.unused
-            dev_code.used_by_user_id = None
-            dev_code.used_at = None
+        if settings.app_env == "production":
+            if dev_code is not None and dev_code.status == RedeemCodeStatus.unused:
+                dev_code.status = RedeemCodeStatus.revoked
+            code_line = "Production: test redeem code is not issued."
+        else:
+            if not dev_code:
+                db.add(RedeemCode(code=DEV_TEST_CODE, sku="lifetime_web", batch_id="dev"))
+            elif settings.app_env == "development":
+                dev_code.status = RedeemCodeStatus.unused
+                dev_code.used_by_user_id = None
+                dev_code.used_at = None
+            code_line = f"Test code: {DEV_TEST_CODE}"
         db.commit()
         print(
             f"DB initialized. User essay: {USER_ESSAY_QUESTION_ID}. "
-            f"Demo bank: {DEMO_QUESTION_ID}. Test code: {DEV_TEST_CODE}\n"
+            f"Demo bank: {DEMO_QUESTION_ID}. {code_line}\n"
             f"首次启用 Alembic: alembic stamp head  （见 AI考试标准引擎/运维说明-标准引擎.md）"
         )
     finally:

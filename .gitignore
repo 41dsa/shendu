@@ -1,5 +1,7 @@
 .env
 .venv
+backups/
+deploy/certs/*.pem
 __pycache__
 *.pyc
 node_modules

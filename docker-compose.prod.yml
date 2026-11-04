@@ -1,4 +1,5 @@
-# OPS-701 / FE-701：生产编排模板（需配置 .env 与 HTTPS 反向代理）
+# OPS-701 / FE-701：生产编排模板（需配置 .env）
+# HTTPS：再叠加 docker-compose.https.yml（证书放 deploy/certs/）
 services:
   db:
     image: postgres:16-alpine
@@ -8,6 +9,11 @@ services:
       POSTGRES_DB: shendu
     volumes:
       - pgdata_prod:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U shendu -d shendu"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
     restart: unless-stopped
 
   redis:
@@ -24,9 +30,26 @@ services:
       REDIS_URL: redis://redis:6379/0
       APP_ENV: production
       CORS_ORIGINS: ${PUBLIC_ORIGIN:-http://localhost:8080}
+      RUN_INIT_DB: "1"
+    volumes:
+      - uploads_prod:/app/uploads
     depends_on:
-      - db
-      - redis
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 40s
     restart: unless-stopped
 
   worker:
@@ -39,7 +62,7 @@ services:
         "app.worker.celery_app.celery_app",
         "worker",
         "-Q",
-        "grading",
+        "grading,standards",
         "-l",
         "info",
       ]
@@ -49,9 +72,14 @@ services:
       DATABASE_URL: postgresql+psycopg://shendu:${POSTGRES_PASSWORD:-change-me}@db:5432/shendu
       REDIS_URL: redis://redis:6379/0
       APP_ENV: production
+      RUN_INIT_DB: "0"
+    volumes:
+      - uploads_prod:/app/uploads
     depends_on:
-      - api
-      - redis
+      api:
+        condition: service_healthy
+      redis:
+        condition: service_started
     restart: unless-stopped
 
   web:
@@ -61,8 +89,10 @@ services:
     ports:
       - "${WEB_PORT:-8080}:80"
     depends_on:
-      - api
+      api:
+        condition: service_healthy
     restart: unless-stopped
 
 volumes:
   pgdata_prod:
+  uploads_prod:

@@ -30,11 +30,6 @@ export default function ActivatePage() {
           兑换
         </Button>
       </Form>
-      <Alert
-        style={{ marginTop: 16 }}
-        type="info"
-        message="开发环境测试码：TEST-DEV-LICENSE（需先 init_db）"
-      />
     </Card>
   );
 }
